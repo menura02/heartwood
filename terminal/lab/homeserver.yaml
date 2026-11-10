@@ -1,0 +1,41 @@
+server_name: localhost
+public_baseurl: http://127.0.0.1:18008/
+report_stats: false
+pid_file: homeserver.pid
+signing_key_path: homeserver.signing.key
+log_config: log.yaml
+database:
+  name: sqlite3
+  args:
+    database: homeserver.db
+media_store_path: media
+listeners:
+  - port: 18008
+    tls: false
+    type: http
+    bind_addresses: ['127.0.0.1']
+    resources:
+      - names: [client]
+trusted_key_servers: []
+federation_domain_whitelist: []
+enable_registration: true
+registration_requires_token: true
+default_room_version: '11'
+room_prejoin_state:
+  additional_event_types:
+    - [com.heartwood.direct, '']
+    - [m.room.history_visibility, '']
+rc_registration:
+  per_second: 1
+  burst_count: 12
+rc_login:
+  address:
+    per_second: 1
+    burst_count: 12
+  account:
+    per_second: 1
+    burst_count: 6
+rc_invites:
+  per_user:
+    per_second: 1
+    burst_count: 12

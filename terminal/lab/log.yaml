@@ -1,0 +1,15 @@
+version: 1
+formatters:
+  simple:
+    format: '%(asctime)s %(name)s %(levelname)s %(message)s'
+handlers:
+  file:
+    class: logging.FileHandler
+    filename: homeserver.log
+    formatter: simple
+root:
+  level: WARNING
+  handlers: [file]
+loggers:
+  synapse.access:
+    level: INFO
