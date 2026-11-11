@@ -12,6 +12,12 @@ import { assertRoom, assertRoomSettings, assertTargets, assertTrusted, deviceCod
 import type { DeviceIdentity, StateEvent } from './policy.ts';
 import { Profile } from './profile.ts';
 import type { ChatLine } from './chat-feed.ts';
+import { readForwardPage, readHistoryPage } from './history.ts';
+import type { HistoryEvent, HistoryPage } from './history.ts';
+import { LiveTimeline } from './live-timeline.ts';
+import { SendAttempts } from './send-attempts.ts';
+import type { SendResult } from './send-attempts.ts';
+import type { Conversation } from './conversation-list.ts';
 
 interface Event { type: string; event_id?: string; sender?: string; content: Record<string, unknown> }
 interface SyncResponse {
@@ -29,12 +35,21 @@ interface DeviceKeys {
   keys: Record<string, string>;
 }
 
+interface PreparedSend {
+  path: string;
+  ciphertext: {algorithm: string; ciphertext: string};
+  recipient: DeviceIdentity;
+  token: string | undefined;
+}
+
 export class Heartwood {
   readonly identity: DeviceIdentity;
   readonly http: MatrixHttp;
   readonly profile: Profile;
   private readonly machine: OlmMachine;
   private readonly invites: Map<string, string>;
+  private readonly sends = new SendAttempts<PreparedSend>();
+  private syncPending?: Promise<string>;
 
   private constructor(http: MatrixHttp, profile: Profile, machine: OlmMachine, session: Login) {
     this.http = http;
@@ -85,7 +100,12 @@ export class Heartwood {
     return response;
   }
 
-  async sync(): Promise<void> {
+  sync(): Promise<string> {
+    this.syncPending ??= this.syncOnce().finally(() => { this.syncPending = undefined; });
+    return this.syncPending;
+  }
+
+  private async syncOnce(): Promise<string> {
     const query = new URLSearchParams({ timeout: '0', set_presence: 'offline' });
     const previous = this.profile.data.sync;
     if (previous) query.set('since', previous.cursor);
@@ -109,6 +129,7 @@ export class Heartwood {
     for (const room of Object.keys(response.rooms?.join ?? {})) this.invites.delete(room);
     // A later sync acknowledges to-device events. Persist only after the SDK stores their keys.
     await this.profile.save({sync: {cursor: response.next_batch, invites: [...this.invites]}});
+    return response.next_batch;
   }
 
   private activePeer(peer: string): string {
@@ -213,10 +234,29 @@ export class Heartwood {
 
   async status(room: string): Promise<{peer: string; verified: boolean}> {
     const peer = await this.roomPeer(room);
+    return {peer, verified: await this.verifiedPeer(peer)};
+  }
+
+  private async verifiedPeer(peer: string): Promise<boolean> {
     const [own, recipient] = await this.devices([this.identity.user, peer]);
     assertTrusted(this.identity, own);
     const pin = this.profile.data.pins[peer];
-    return { peer, verified: !!pin && deviceCode(pin) === deviceCode(recipient) };
+    return !!pin && deviceCode(pin) === deviceCode(recipient);
+  }
+
+  async conversations(): Promise<{rooms: Conversation[]; unavailable: number}> {
+    const rooms: Conversation[] = [];
+    let unavailable = 0;
+    for (const room of await this.rooms()) {
+      try {
+        const peer = await this.roomPeer(room);
+        const verified = await this.verifiedPeer(peer).catch(() => undefined);
+        rooms.push({room, peer, verified});
+      } catch {
+        unavailable++;
+      }
+    }
+    return {rooms, unavailable};
   }
 
   private async devices(users: string[]): Promise<DeviceIdentity[]> {
@@ -255,13 +295,31 @@ export class Heartwood {
     await this.machine.markRequestAsSent(request.id, request.type, JSON.stringify(response));
   }
 
-  async send(room: string, message: string): Promise<void> {
+  async send(room: string, message: string, expectedPeer?: string): Promise<SendResult> {
     if (!message.trim() || Buffer.byteLength(message, 'utf8') > 4000) throw new Error('Mesaj 1–4000 UTF-8 bayt olmalı.');
+    return this.sends.start(room, () => this.prepareSend(room, message, expectedPeer), prepared => this.submitSend(prepared));
+  }
+
+  async retrySend(room: string, expectedPeer?: string): Promise<SendResult> {
+    return this.sends.retry(room, async prepared => {
+      const [, recipient] = await this.sendDevices(room, expectedPeer);
+      assertTrusted(prepared.recipient, recipient);
+      if (this.http.token !== prepared.token) throw new Error('Gönderimin Matrix oturumu değişti.');
+    }, prepared => this.submitSend(prepared));
+  }
+
+  private async sendDevices(room: string, expectedPeer?: string): Promise<[DeviceIdentity, DeviceIdentity]> {
     await this.sync();
     const peer = await this.roomPeer(room);
+    if (expectedPeer !== undefined && peer !== expectedPeer) throw new Error('Sohbetin karşı tarafı değişti.');
     const [own, recipient] = await this.devices([this.identity.user, peer]);
     assertTrusted(this.identity, own);
     assertTrusted(this.profile.data.pins[peer], recipient);
+    return [own, recipient];
+  }
+
+  private async prepareSend(room: string, message: string, expectedPeer?: string): Promise<PreparedSend> {
+    const [own, recipient] = await this.sendDevices(room, expectedPeer);
     const users = [own.user, recipient.user].map(user => new UserId(user));
     const claim = await this.machine.getMissingSessions(users);
     if (claim) await this.keyRequest(claim);
@@ -276,35 +334,71 @@ export class Heartwood {
     const ciphertext = JSON.parse(await this.machine.encryptRoomEvent(roomId, 'm.room.message',
       JSON.stringify({ msgtype: 'm.text', body: message }))) as {algorithm?: string; ciphertext?: string};
     if (ciphertext.algorithm !== megolm || !ciphertext.ciphertext) throw new Error('Şifreleme tamamlanmadı.');
-    await this.http.request('PUT', `rooms/${part(room)}/send/m.room.encrypted/${randomUUID()}`, ciphertext);
+    return {path: `rooms/${part(room)}/send/m.room.encrypted/${randomUUID()}`,
+      ciphertext: {...ciphertext, algorithm: megolm, ciphertext: ciphertext.ciphertext},
+      recipient, token: this.http.token};
+  }
+
+  private async submitSend(prepared: PreparedSend): Promise<string> {
+    const response = await this.http.request<{event_id: string}>('PUT', prepared.path, prepared.ciphertext);
+    return response.event_id;
   }
 
   async history(room: string): Promise<ChatLine[]> {
+    return (await this.historyPage(room)).lines;
+  }
+
+  async historyPage(room: string, before?: string): Promise<HistoryPage> {
     await this.sync();
     const peer = await this.roomPeer(room);
-    const { chunk } = await this.http.request<{chunk: Event[]}>('GET',
-      `rooms/${part(room)}/messages?dir=b&limit=50`);
+    const {events, next} = await readHistoryPage(path => this.http.request('GET', path), room, before);
     const history: ChatLine[] = [];
-    for (const event of chunk.reverse()) {
-      if (event.type !== 'm.room.encrypted' || typeof event.event_id !== 'string' ||
-          (event.sender !== peer && event.sender !== this.identity.user)) continue;
-      const line = {id: event.event_id, sender: event.sender};
-      const expected = event.sender === peer ? this.profile.data.pins[peer] : this.identity;
-      try {
-        const clear = await this.machine.decryptRoomEvent(JSON.stringify(event), new RoomId(room));
-        const value = JSON.parse(clear.event) as Event;
-        if (!expected || clear.sender?.toString() !== expected.user ||
-            (clear.senderDevice && clear.senderDevice.toString() !== expected.device) ||
-            clear.senderCurve25519Key !== expected.curve ||
-            clear.senderClaimedEd25519Key !== expected.ed ||
-            clear.forwardingCurve25519KeyChain.length ||
-            value.type !== 'm.room.message' || value.content.msgtype !== 'm.text' ||
-            typeof value.content.body !== 'string') throw new Error();
-        history.push({...line, body: value.content.body});
-      } catch {
-        history.push(line);
-      }
+    for (const event of events) {
+      const line = await this.decode(room, peer, event);
+      if (line) history.push(line);
     }
-    return history;
+    return {lines: history, next};
+  }
+
+  async openLive(room: string, expectedPeer?: string) {
+    const anchor = await this.sync();
+    const peer = await this.roomPeer(room);
+    if (expectedPeer !== undefined && peer !== expectedPeer) throw new Error('Sohbetin karşı tarafı değişti.');
+    const request = (path: string) => this.http.request('GET', path);
+    const timeline = new LiveTimeline(anchor);
+    const {events} = await readHistoryPage(request, room, anchor);
+    const decode = (event: HistoryEvent) => this.decode(room, peer, event);
+    const initial = await timeline.initial(events, decode);
+    return {
+      initial,
+      send: (message: string) => this.send(room, message, peer),
+      retry: () => this.retrySend(room, peer),
+      refresh: () => timeline.poll(async from => {
+        const until = await this.sync();
+        if (await this.roomPeer(room) !== peer) throw new Error('Sohbetin karşı tarafı değişti.');
+        return readForwardPage(request, room, from, until);
+      }, decode),
+    };
+  }
+
+  private async decode(room: string, peer: string, event: HistoryEvent): Promise<ChatLine | undefined> {
+    if (event.type !== 'm.room.encrypted' || typeof event.event_id !== 'string' ||
+        (event.sender !== peer && event.sender !== this.identity.user)) return;
+    const line = {id: event.event_id, sender: event.sender};
+    const expected = event.sender === peer ? this.profile.data.pins[peer] : this.identity;
+    try {
+      const clear = await this.machine.decryptRoomEvent(JSON.stringify(event), new RoomId(room));
+      const value = JSON.parse(clear.event) as Event;
+      if (!expected || clear.sender?.toString() !== expected.user ||
+          (clear.senderDevice && clear.senderDevice.toString() !== expected.device) ||
+          clear.senderCurve25519Key !== expected.curve ||
+          clear.senderClaimedEd25519Key !== expected.ed ||
+          clear.forwardingCurve25519KeyChain.length ||
+          value.type !== 'm.room.message' || value.content.msgtype !== 'm.text' ||
+          typeof value.content.body !== 'string') return line;
+      return {...line, body: value.content.body};
+    } catch {
+      return line;
+    }
   }
 }

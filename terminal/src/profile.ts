@@ -1,8 +1,9 @@
-import { mkdir, readFile, rename, rmdir, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { DeviceIdentity } from './policy.ts';
+import { acquireProfileLock } from './profile-lock.ts';
 
 interface Data {
   origin: string;
@@ -17,10 +18,12 @@ interface Data {
 export class Profile {
   readonly path: string;
   readonly data: Data;
+  private readonly release: () => Promise<void>;
 
-  private constructor(path: string, data: Data) {
+  private constructor(path: string, data: Data, release: () => Promise<void>) {
     this.path = path;
     this.data = data;
+    this.release = release;
   }
 
   static async open(name: string, origin: string, username: string, root = join(homedir(), '.heartwood')): Promise<Profile> {
@@ -29,27 +32,30 @@ export class Profile {
     }
     const path = join(root, name);
     await mkdir(path, { recursive: true, mode: 0o700 });
-    const lock = join(path, 'in-use');
-    await mkdir(lock).catch((error: NodeJS.ErrnoException) => {
-      if (error.code === 'EEXIST') throw new Error('Profil kullanımda veya önceki oturum düzgün kapanmadı.');
-      throw error;
-    });
+    const release = await acquireProfileLock(path);
     try {
       let data: Data;
       try {
         data = JSON.parse(await readFile(join(path, 'profile.json'), 'utf8')) as Data;
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+        for (const name of ['keys', 'profile.next']) {
+          const exists = await lstat(join(path, name)).then(() => true).catch((failure: NodeJS.ErrnoException) => {
+            if (failure.code === 'ENOENT') return false;
+            throw failure;
+          });
+          if (exists) throw new Error('Profil kaydı eksik. Mevcut dosyalar korunuyor.');
+        }
         data = { origin, username, device: randomUUID(), pins: {}, blocked: [] };
       }
       if (data.origin !== origin || data.username !== username) {
         throw new Error('Bu profil farklı bir sunucuya veya kullanıcıya bağlı.');
       }
-      const profile = new Profile(path, data);
+      const profile = new Profile(path, data, release);
       await profile.save();
       return profile;
     } catch (error) {
-      await rmdir(lock);
+      await release();
       throw error;
     }
   }
@@ -62,6 +68,6 @@ export class Profile {
   }
 
   async close(): Promise<void> {
-    await rmdir(join(this.path, 'in-use'));
+    await this.release();
   }
 }

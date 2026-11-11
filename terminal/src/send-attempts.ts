@@ -1,0 +1,51 @@
+import { MatrixFailure } from './matrix.ts';
+
+export type SendResult = {status: 'accepted'; eventId: string} | {status: 'uncertain'};
+type Submit<T> = (prepared: T) => Promise<string>;
+
+export class SendAttempts<T> {
+  private readonly rooms = new Map<string, {busy: boolean; prepared?: T}>();
+
+  async start(room: string, prepare: () => Promise<T>, submit: Submit<T>): Promise<SendResult> {
+    if (this.rooms.has(room)) throw new Error('Bu odada bekleyen gönderim var. /tekrar kullan.');
+    if (this.rooms.size >= 32) throw new Error('Bekleyen gönderim sınırına ulaşıldı.');
+    const slot: {busy: boolean; prepared?: T} = {busy: true};
+    this.rooms.set(room, slot);
+    try {
+      const prepared = await prepare();
+      const result = await this.submit(prepared, submit, false);
+      if (result.status === 'uncertain') slot.prepared = prepared;
+      return result;
+    } finally {
+      slot.busy = false;
+      if (slot.prepared === undefined) this.rooms.delete(room);
+    }
+  }
+
+  async retry(room: string, authorize: (prepared: T) => Promise<void>, submit: Submit<T>): Promise<SendResult> {
+    const slot = this.rooms.get(room);
+    if (slot?.busy) throw new Error('Gönderim işlemi sürüyor.');
+    if (!slot || slot.prepared === undefined) throw new Error('Bekleyen gönderim yok.');
+    slot.busy = true;
+    try {
+      await authorize(slot.prepared);
+      const result = await this.submit(slot.prepared, submit, true);
+      if (result.status === 'accepted') this.rooms.delete(room);
+      return result;
+    } finally {
+      slot.busy = false;
+    }
+  }
+
+  private async submit(prepared: T, submit: Submit<T>, retry: boolean): Promise<SendResult> {
+    try {
+      const eventId = await submit(prepared);
+      if (typeof eventId !== 'string' || !eventId.startsWith('$')) return {status: 'uncertain'};
+      return {status: 'accepted', eventId};
+    } catch (error) {
+      if (!retry && error instanceof MatrixFailure && error.status >= 400 && error.status < 500 &&
+          error.status !== 408 && error.code !== 'UNKNOWN') throw error;
+      return {status: 'uncertain'};
+    }
+  }
+}

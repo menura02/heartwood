@@ -9,6 +9,7 @@ export class ChatFeed {
       const previous = this.seen.get(line.id);
       if (previous === true || previous === readable) return false;
       this.seen.set(line.id, readable);
+      if (this.seen.size > 512) this.seen.delete(this.seen.keys().next().value!);
       return true;
     });
   }

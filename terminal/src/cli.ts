@@ -7,8 +7,10 @@ import { Heartwood } from './client.ts';
 import { MatrixHttp, login, register } from './matrix.ts';
 import { deviceCode, safeText } from './policy.ts';
 import { Profile } from './profile.ts';
-import { ChatFeed } from './chat-feed.ts';
 import type { ChatLine } from './chat-feed.ts';
+import { HistoryNavigator } from './history-navigation.ts';
+import type { SendResult } from './send-attempts.ts';
+import { ConversationList } from './conversation-list.ts';
 
 const help = `Kullanım: npm start -- <kayıt|giriş> <profil> <sunucu> <kullanıcı>
 Örnek: npm start -- giriş alice http://127.0.0.1:8008 alice
@@ -21,10 +23,13 @@ const help = `Kullanım: npm start -- <kayıt|giriş> <profil> <sunucu> <kullan�
 /engelle @kullanıcı:sunucu    Kullanıcıyı engelle ve ilgili odalardan ayrıl
 /dogrula @kullanıcı:sunucu KOD Güvenilir kanalda karşılaştırdığın tam kodu sabitle
 /odalar                       Katıldığın odaların kimlikleri
-/sohbet [!oda]                Sohbeti aç. Tek odan varsa oda kimliği gerekmez.
+/sohbetler                    Karşı tarafı ve cihaz durumunu listele
+/sohbet [numara|!oda]         Sohbeti aç. Tek odan varsa seçim gerekmez.
 /durum !oda                   Megolm ve güncel cihaz doğrulaması
 /gonder !oda MESAJ            Şifreli metin gönder
+/tekrar !oda                  Sonucu belirsiz gönderimi tekrar dene
 /gecmis !oda                  Son 50 olayı al ve doğrulanmış metni çöz
+/onceki !oda                  Daha eski sayfayı aç. Canlı sohbetten /geri ile dön.
 /cikis                        Profili kapat`;
 
 function report(error: unknown): void {
@@ -35,12 +40,19 @@ function chatText(line: ChatLine): string {
   return safeText(`${line.sender}  ${line.body ?? '[çözülemedi veya cihaz doğrulanmadı]'}`);
 }
 
-async function liveChat(client: Heartwood, reader: Interface, room: string, signal: AbortSignal): Promise<boolean> {
-  const feed = new ChatFeed();
-  const initial = await client.history(room);
+async function sendWithStatus(action: () => Promise<SendResult>, retry = false): Promise<void> {
+  console.log(retry ? 'Yeniden deneniyor…' : 'Gönderiliyor…');
+  const result = await action();
+  console.log(result.status === 'accepted' ? 'Şifreli olay sunucu tarafından kabul edildi.' :
+    'Gönderim sonucu belirsiz. Aynı gönderimi /tekrar ile dene.');
+}
+
+async function liveChat(client: Heartwood, reader: Interface, room: string, signal: AbortSignal,
+  expectedPeer?: string): Promise<boolean> {
+  const live = await client.openLive(room, expectedPeer);
   if (signal.aborted) return true;
-  console.log('Sohbet açık. Mesajını yaz ve Enter’a bas. /geri ile dön, /cikis ile kapat.');
-  for (const line of feed.update(initial)) console.log(chatText(line));
+  console.log('Sohbet açık. Mesajını yaz ve Enter’a bas. /tekrar, /geri veya /cikis kullanabilirsin.');
+  for (const line of live.initial) console.log(chatText(line));
 
   let waiting = false;
   let sending = false;
@@ -58,7 +70,7 @@ async function liveChat(client: Heartwood, reader: Interface, room: string, sign
 
   async function refresh(): Promise<void> {
     try {
-      const lines = feed.update(await client.history(room)).map(chatText);
+      const lines = (await live.refresh()).map(chatText);
       if (lastError) lines.unshift('Sohbet güncellendi.');
       lastError = undefined;
       show(lines);
@@ -87,7 +99,8 @@ async function liveChat(client: Heartwood, reader: Interface, room: string, sign
       try {
         await pending;
         if (signal.aborted) return true;
-        await client.send(room, message);
+        if (message === '/tekrar') await sendWithStatus(live.retry, true);
+        else await sendWithStatus(() => live.send(message));
       } catch (error) { report(error); }
       finally { sending = false; }
     }
@@ -114,6 +127,8 @@ async function secret(prompt: string): Promise<string> {
 }
 
 async function shell(client: Heartwood): Promise<void> {
+  const history = new HistoryNavigator((room, before) => client.historyPage(room, before));
+  const conversations = new ConversationList();
   const reader = createInterface({ input: stdin, output: stdout, terminal: true, historySize: 0 });
   const closed = new AbortController();
   reader.once('close', () => closed.abort());
@@ -139,11 +154,27 @@ async function shell(client: Heartwood): Promise<void> {
           case '/odalar':
             for (const room of await client.rooms()) console.log(safeText(room));
             break;
+          case '/sohbetler': {
+            const {rooms, unavailable} = await client.conversations();
+            for (const {number, peer, verified} of conversations.replace(rooms)) {
+              const status = verified === undefined ? 'cihaz durumu bilinmiyor' :
+                verified ? 'cihaz doğrulandı' : 'cihaz doğrulanmadı';
+              console.log(safeText(`${number}. ${peer} · ${status}`));
+            }
+            if (rooms.length === 0) console.log('Erişilebilir sohbet yok.');
+            if (unavailable > 0) console.log(`${unavailable} oda listelenemedi.`);
+            break;
+          }
           case '/sohbet': {
-            const rooms = target ? [target] : await client.rooms();
+            if (target.startsWith('!')) {
+              if (await liveChat(client, reader, target, closed.signal)) return;
+              break;
+            }
+            const selected = target ? conversations.select(target) : undefined;
+            const rooms = selected ? [selected.room] : await client.rooms();
             if (!rooms.length) throw new Error('Önce bir sohbet davetini kabul et.');
-            if (rooms.length > 1) throw new Error('Odayı seçmek için /odalar ve /sohbet !oda kullan.');
-            if (await liveChat(client, reader, rooms[0], closed.signal)) return;
+            if (rooms.length > 1) throw new Error('Odayı seçmek için /sohbetler kullan.');
+            if (await liveChat(client, reader, rooms[0], closed.signal, selected?.peer)) return;
             break;
           }
           case '/durum': {
@@ -153,15 +184,20 @@ async function shell(client: Heartwood): Promise<void> {
           }
           case '/gonder': {
             const message = /^\S+\s+\S+\s+(.+)$/u.exec(line.trim())?.[1] ?? '';
-            await client.send(target, message);
-            console.log('Şifreli olay sunucu tarafından kabul edildi.');
+            await sendWithStatus(() => client.send(target, message));
             break;
           }
+          case '/tekrar': await sendWithStatus(() => client.retrySend(target), true); break;
           case '/gecmis':
-            for (const event of await client.history(target)) {
-              console.log(chatText(event));
-            }
+          case '/onceki': {
+            const result = await (command === '/gecmis' ? history.latest(target) : history.older(target));
+            console.log(`Geçmiş sayfası ${result.page}`);
+            if (result.lines.length === 0) console.log('Bu sayfada gösterilebilir mesaj yok.');
+            for (const event of result.lines) console.log(chatText(event));
+            if (result.hasMore) console.log('Daha eski olaylar için /onceki !oda kullan.');
+            else console.log('Daha eski olay yok.');
             break;
+          }
           case '/cikis': return;
           case '': break;
           default: console.log('Bilinmeyen komut. /yardim ile komutları göster.');
