@@ -101,6 +101,8 @@ jobs:
             echo "::error::A release or draft already exists for this tag. Inspect it in GitHub before retrying."
             exit 1
           fi
+          flags=(--verify-tag --draft)
+          if [[ ${GITHUB_REF_NAME%%+*} == *-* ]]; then flags+=(--prerelease); fi
           gh release create "$GITHUB_REF_NAME" heartwood-terminal.zip SHA256SUMS \
-            --repo "$GITHUB_REPOSITORY" --verify-tag --draft \
+            --repo "$GITHUB_REPOSITORY" "${flags[@]}" \
             --title "Heartwood $GITHUB_REF_NAME" --notes-file release-notes.md
