@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { LiveRecovery } from '../src/connection.ts';
+import { formatError } from '../src/failures.ts';
 import { MatrixFailure, MatrixTransportFailure, MatrixHttp } from '../src/matrix.ts';
 
 test('temporary failures use bounded jitter and success resets the next delay', () => {
@@ -49,8 +50,19 @@ test('an unrecognized Matrix error code is retained for callers and hidden from 
     assert.ok(error instanceof MatrixFailure);
     assert.equal(error.status, 403);
     assert.equal(error.code, 'M_PRIVATE_DETAIL');
-    assert.match(error.message, /HW_MATRIX_REQUEST/);
-    assert.doesNotMatch(error.message, /M_PRIVATE_DETAIL|secret token/);
+    for (const output of [error.message, formatError(error, 'tr')]) {
+      assert.match(output, /HW_MATRIX_REQUEST/);
+      assert.doesNotMatch(output, /M_PRIVATE_DETAIL|secret token/);
+    }
+    assert.match(formatError(error, 'tr'), /^Matrix isteği başarısız oldu\./);
     return true;
   });
+});
+
+test('known Matrix errors have local messages and native errors get a safe fallback', () => {
+  const error = new MatrixFailure(401, 'M_UNKNOWN_TOKEN');
+  assert.match(formatError(error, 'en'), /Sign in again\./);
+  assert.match(formatError(error, 'tr'), /Yeniden giriş yap\./);
+  const native = new Error('private file and secret token');
+  assert.equal(formatError(native, 'tr'), 'Beklenmeyen bir hata oluştu. [HW_UNEXPECTED]');
 });
