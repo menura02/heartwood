@@ -1,10 +1,20 @@
 name: Heartwood terminal
 on:
   push:
+    branches: ['**']
   pull_request:
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      commit:
+        type: string
+        required: true
 permissions:
   contents: read
+
+concurrency:
+  group: terminal-ci-${{ github.ref_type == 'tag' && github.run_id || github.ref }}
+  cancel-in-progress: ${{ github.ref_type != 'tag' }}
 
 defaults:
   run:
@@ -16,15 +26,19 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 10
     strategy:
+      fail-fast: false
       matrix:
         os: [windows-2025, ubuntu-24.04]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           persist-credentials: false
-      - uses: actions/setup-node@v6
+          ref: ${{ inputs.commit || '' }}
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: 24.20.0
+          cache: npm
+          cache-dependency-path: terminal/package-lock.json
       - run: npm ci
       - run: node ci/verify.ts
 
@@ -33,16 +47,21 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 12
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           persist-credentials: false
-      - uses: actions/setup-node@v6
+          ref: ${{ inputs.commit || '' }}
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: 24.20.0
-      - uses: actions/setup-python@v6
+          cache: npm
+          cache-dependency-path: terminal/package-lock.json
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: '3.13'
       - run: npm ci
+      - name: Check release validation and packaging
+        run: python -B ci/test_release.py
       - name: Run against disposable Synapse
         run: |
           python -m venv "$RUNNER_TEMP/heartwood-synapse"
