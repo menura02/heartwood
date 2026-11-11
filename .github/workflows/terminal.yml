@@ -34,6 +34,7 @@ jobs:
         with:
           persist-credentials: false
           ref: ${{ inputs.commit || '' }}
+          fetch-depth: ${{ runner.os == 'Linux' && github.event_name == 'pull_request' && '0' || '1' }}
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: 24.20.0
@@ -41,6 +42,12 @@ jobs:
           cache-dependency-path: terminal/package-lock.json
       - run: npm ci
       - run: node ci/verify.ts
+      - name: Check documentation language pairs and links
+        if: runner.os == 'Linux'
+        run: node ci/check-docs.ts
+        env:
+          HEARTWOOD_DOCS_BASE: ${{ github.event.pull_request.base.sha }}
+          HEARTWOOD_DOCS_HEAD: ${{ github.event.pull_request.head.sha }}
 
   synapse:
     name: Synapse integration on Linux

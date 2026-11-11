@@ -1,0 +1,26 @@
+{
+  "pairs": [
+    {"en": "README.md", "tr": "README.tr.md"},
+    {"en": "CHANGELOG.md", "tr": "CHANGELOG.tr.md"},
+    {"en": "CONTRIBUTING.md", "tr": "CONTRIBUTING.tr.md"},
+    {"en": "docs/portfolio/ci-cd-guide.md", "tr": "docs/portfolio/ci-cd-guide.tr.md"},
+    {"en": "docs/portfolio/distribution.md", "tr": "docs/portfolio/distribution.tr.md"},
+    {"en": "docs/portfolio/reliability-design.md", "tr": "docs/portfolio/reliability-design.tr.md"},
+    {"en": "docs/portfolio/technical-design.md", "tr": "docs/portfolio/technical-design.tr.md"},
+    {"en": "docs/portfolio/terminal-guide.md", "tr": "docs/portfolio/terminal-guide.tr.md"},
+    {"en": "docs/archive/README.md", "tr": "docs/archive/README.tr.md"}
+  ],
+  "bilingual": [
+    {"path": ".github/ISSUE_TEMPLATE/bug_report.md", "reason": "One GitHub bug report template presents English followed by Turkish."},
+    {"path": ".github/PULL_REQUEST_TEMPLATE.md", "reason": "The single default GitHub pull request form presents English followed by Turkish."},
+    {"path": "docs/portfolio/terminal-ci.yml", "reason": "A bilingual redirect comment points to the executable workflow and both CI guides."}
+  ],
+  "exceptions": [
+    {"path": "AGENTS.md", "reason": "Agent instructions have one canonical English edition. The contribution guide explains the policy in both languages."},
+    {"path": "docs/archive/2026-11-11-ci-cd-handoff.tr.md", "reason": "Preserves the original Turkish CI/CD handoff and historical results. The current CI guide has both editions."},
+    {"path": "docs/superpowers/**", "reason": "Historical plans and design records retain their original language. The archive index explains their status."},
+    {"path": "Local historical drafts and ZIP inventoried in docs/archive/README.md", "reason": "These workspace materials are not tracked release inputs or current documentation."},
+    {"path": "Third-party content and license texts, when present", "reason": "Preserve the upstream originals and legal wording."},
+    {"path": "Generated output, including release archives and checksums", "reason": "Maintain the editable sources and regenerate output through the packaging workflow."}
+  ]
+}

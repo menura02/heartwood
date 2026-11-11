@@ -1,19 +1,25 @@
-# Heartwood terminal kurulumu ve gösterimi
+[English](terminal-guide.md) | [Türkçe](terminal-guide.tr.md)
 
-## İstemci
+# Heartwood terminal setup and demo
 
-Tekrarlanabilir kurulum için Node 24.20.0 ve onunla gelen npm'i kullan. Windows veya Linux checkout'unda `terminal/` dizininden çalıştır.
+## Client
+
+Use Node.js 24.20.0 and its bundled npm for a reproducible installation. Start in `terminal/` in a Windows or Linux checkout.
 
 ```sh
 npm ci
-npm start -- --help
+npm start -- --lang en --help
 ```
 
-Matrix bağlayıcısının resmî platform ikilisi kurulum sırasında GitHub Releases'dan indirilir. Kurulum tamamlandıktan sonra yerel sohbet için internet erişimi gerekmez. [Desteklenen platformlar](https://github.com/matrix-org/matrix-rust-sdk-crypto-nodejs#usage)
+Installation downloads the official Matrix binding binary for your platform from GitHub Releases. Once installed, local chat works without internet access. [Supported platforms](https://github.com/matrix-org/matrix-rust-sdk-crypto-nodejs#usage)
 
-## Yerel Synapse
+English is the default for the client and lab. Set `HEARTWOOD_LANG=tr` to use Turkish by default, or pass `--lang en` or `--lang tr` to override the environment for a single run. In PowerShell use `$env:HEARTWOOD_LANG = 'tr'`. In Linux or WSL use `export HEARTWOOD_LANG=tr`.
 
-Aşağıdaki komutları Ubuntu WSL veya Linux terminalinde bir kez çalıştır. Python 3, `venv` modülü ve `curl` gerekir. Kurulum Python ortamını kullanıcının Linux ana dizinine yazar. Bu yöntem `ensurepip` kurulumu gerektirmez.
+Both sets of command names work in either interface language. Use `register` or `kayıt` (`kayit`) to create an account, and `login` or `giriş` (`giris`) to return. This guide uses English command names. The [Turkish guide](terminal-guide.tr.md) shows the corresponding Turkish commands.
+
+## Local Synapse
+
+Run the following once in Ubuntu WSL or Linux. You need Python 3, the `venv` module, and `curl`. This installs a Python environment under your Linux home directory and works without `ensurepip`.
 
 ```sh
 mkdir -p "$HOME/.local/share/heartwood"
@@ -22,45 +28,45 @@ curl -fsSL https://bootstrap.pypa.io/pip/pip.pyz -o "$HOME/.local/share/heartwoo
 "$HOME/.local/share/heartwood/venv/bin/python" "$HOME/.local/share/heartwood/pip.pyz" install matrix-synapse==1.164.2
 ```
 
-Windows PowerShell'de `terminal/` dizininden laboratuvarı başlat. Ubuntu dışındaki WSL dağıtımında ilk komuttaki dağıtım adını ve `HEARTWOOD_WSL_DISTRO` değerini ayarla. Linux'ta aynı Node komutundan önce `export HEARTWOOD_SYNAPSE_PYTHON="$HOME/.local/share/heartwood/venv/bin/python"` kullan.
+In Windows PowerShell, start the lab from `terminal/`. For a WSL distribution other than Ubuntu, substitute its name in the first command and set `HEARTWOOD_WSL_DISTRO` to that name. On Linux, run `export HEARTWOOD_SYNAPSE_PYTHON="$HOME/.local/share/heartwood/venv/bin/python"` before the same Node command.
 
 ```powershell
 $linuxHome = (wsl -d Ubuntu --exec printenv HOME).Trim()
 $env:HEARTWOOD_SYNAPSE_PYTHON = "$linuxHome/.local/share/heartwood/venv/bin/python"
-node lab/run.ts 18008
+node lab/run.ts --lang en 18008
 ```
 
-Başlatıcı yalnızca `127.0.0.1:18008` üzerinde çalışır ve hazır olunca üç kullanımlık, 30 dakikalık kayıt belirtecini terminalde gösterir. Bu pencereyi açık bırak. Ctrl+C ile çıkıldığında bu koşunun sunucu ve kurgusal hesap dosyaları temizlenir. Yönetici parolası ve belirteçler erişim günlüğüne yazılmaz.
+The lab listens only on `127.0.0.1:18008` and displays a 30-minute registration token good for three uses when ready. Keep that window open. Ctrl+C stops the lab and removes its server and fictional account files. The access log omits the admin password and tokens.
 
-## İki terminalle gösterim
+## Two-terminal demo
 
-Her iki PowerShell penceresinde `terminal/` dizininde ol. Yeni laboratuvar her çalıştırmada yeni bir sunucu veritabanı açar. Aşağıdaki komutlar bu yüzden her koşuya yeni profil adları verir.
+Open two PowerShell windows in `terminal/`. The lab uses a fresh server database on each launch, so these commands create a fresh local profile name for each run.
 
 ```powershell
-# Alice penceresi
+# Alice's window
 $demoProfile = 'alice-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
-npm.cmd start -- kayit $demoProfile http://127.0.0.1:18008 alice
+npm.cmd start -- --lang en register $demoProfile http://127.0.0.1:18008 alice
 ```
 
 ```powershell
-# Bob penceresi
+# Bob's window
 $demoProfile = 'bob-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
-npm.cmd start -- kayit $demoProfile http://127.0.0.1:18008 bob
+npm.cmd start -- --lang en register $demoProfile http://127.0.0.1:18008 bob
 ```
 
-1. İki pencerede de belirteci ve hesap parolalarını istemlerde gir. Her profil için ayrı bir depo parolası kullan.
-2. Alice `/davet @bob:localhost` çalıştırır. Bob `/istekler` ardından `/kabul !ODA` çalıştırır. `!ODA` yerine listelenen tam oda kimliğini yaz.
-3. Her iki kullanıcı `/kimlik` ile hesap, cihaz ve tam kodunu görür. Sekiz grubu güvenilir ikinci kanaldan karşılaştır. Alice `/dogrula @bob:localhost BOB_KODU`, Bob `/dogrula @alice:localhost ALICE_KODU` çalıştırır. Kodu ekrandaki tek ASCII boşluklarla veya düz 64 hane olarak gir.
-4. Alice ve Bob `/sohbetler` ile karşı tarafı ve doğrulama durumunu görür, ardından listelerindeki numarayla `/sohbet 1` çalıştırır. `sohbet>` satırına `Merhaba Bob` yazıp Enter'a bas. Diğer terminalde mesaj görünür. `/geri` ana komut ekranına döner, `/cikis` profili kapatır.
-5. Ayrı bir davette `/ret !ODA` akışını dene. `/engelle @alice:localhost` sonrasında Bob ilgili Heartwood odalarından ayrılır ve yeni Alice davetleri gösterilmez.
+1. Enter the registration token and account passwords at the prompts. Use a separate store passphrase for each profile.
+2. Alice runs `/invite @bob:localhost`. Bob runs `/requests` followed by `/accept !ROOM`. Substitute the full room ID from the list for `!ROOM`.
+3. Both users run `/identity` to display their account, device and full code. Compare all eight groups over a trusted second channel. Alice runs `/verify @bob:localhost BOB_CODE` and Bob runs `/verify @alice:localhost ALICE_CODE`. Use the displayed ASCII spaces or enter the 64 characters without spaces.
+4. Both users run `/conversations` to see the other person and the device trust status, then open their listed conversation with `/chat 1` using its number. Type `Hello Bob` at the `chat>` prompt and press Enter. The message appears in the other terminal. `/back` returns to the main prompt and `/exit` closes the profile.
+5. In a separate invitation, try `/reject !ROOM`. After Bob runs `/block @alice:localhost`, he leaves the related Heartwood rooms and new invitations from Alice are hidden.
 
-Aynı laboratuvar çalışırken Bob `/cikis` ile çıkıp aynı PowerShell penceresinde `npm.cmd start -- giris $demoProfile http://127.0.0.1:18008 bob` ile geri dönebilir. Yeni profil adı üretme. Önceki mesajları `/gecmis !ODA` ile aç.
+While the same lab is running, Bob can exit with `/exit` and return from the same window with `npm.cmd start -- --lang en login $demoProfile http://127.0.0.1:18008 bob`. Reuse the existing profile name. Read previous messages with `/history !ROOM`.
 
-Profiller işletim sistemi kullanıcı dizinindeki `.heartwood/` altında tutulur. Profilde cihaz kimliği, açık anahtar pinleri, engel listesi, eşzamanlama imleci ve bekleyen davet kimlikleri bulunur. Hesap parolası ve erişim belirteci dosyaya yazılmaz. Yeni profil kilidi anormal kapanıştan sonra işletim sistemi kilidi alınabildiğinde otomatik toparlanır. İşaretsiz eski `in-use` klasörü için tüm istemcilerin kapalı olduğunu bağımsız olarak doğrulamak gerekir. Yalnızca doğrulanmış boş eski klasörü kaldır. Profil anahtar deposunu kaybedersen eski mesajları bu istemcide kurtaramazsın.
+Profiles live under `.heartwood/` in the operating system user's home directory. A profile contains its device ID, public key pins, blocklist, sync cursor, and pending invitation IDs. The account password and access token stay off disk. After an abnormal shutdown, the current profile lock recovers when it can acquire the operating system lock. For an unmarked legacy `in-use` directory, independently verify that all clients are stopped before removing the verified empty directory. Losing the profile's key store prevents this client from recovering older messages.
 
-## Entegrasyon testi
+## Integration tests
 
-Geliştirme çalışma alanında `terminal/` dizininden şu komutları çalıştır. İkinci komut demo sunucusundan ayrı bir örnek başlatır. Varsayılan test portu `18019`, alternatif `HEARTWOOD_TEST_PORT` ile seçilir. Kayıt belirteci test sürecine bellekte iletilir ve çalışma dizini test sonunda temizlenir.
+In a development checkout, run these commands from `terminal/`. The integration runner starts a separate instance from the demo. The default test port is `18019`. Set `HEARTWOOD_TEST_PORT` to choose another one. The runner passes the registration token to the test process in memory and cleans up its working directory at the end.
 
 ```powershell
 node ci/verify.ts
@@ -69,7 +75,7 @@ $env:HEARTWOOD_SYNAPSE_PYTHON = "$linuxHome/.local/share/heartwood/venv/bin/pyth
 node integration/run-local.ts
 ```
 
-Linux veya WSL'de Linux Node 24.20.0 kurulu olduğunda aynı komutları doğrudan çalıştırabilirsin. PTY testi iki gerçek CLI süreci açar ve Python 3.13 veya daha yeni bir sürüm gerektirir.
+On Linux or WSL with Node.js 24.20.0 installed, run the commands directly. The PTY test launches two real CLI processes and requires Python 3.13 or later.
 
 ```sh
 npm ci
@@ -79,18 +85,20 @@ node integration/run-local.ts
 node integration/run-pty.ts
 ```
 
-CI tanımı Windows ve Linux tip kontrolünü ve birim testlerini, ayrı Linux işi Synapse ve PTY senaryolarını çalıştırır. [İş akışı](../../.github/workflows/terminal.yml)
+CI runs type checks and unit tests on Windows and Linux. A separate Linux job runs Synapse and PTY scenarios. [CI workflow](../../.github/workflows/terminal.yml)
 
-Heartwood terminali, cihaz pini, oda/üyelik kuralları ve HTTP orkestrasyonunu sağlar. Olm/Megolm ve anahtar deposu Matrix Rust SDK bağlayıcısına, sunucu ve olay saklama Synapse'e aittir. Sunucu olay ve günlük kontrolü yalnızca test edilen akıştaki örnek metni kapsar. [Tehdit sınırı ve mimari](technical-design.md)
+Heartwood provides the terminal interface, device pins, room and membership rules, and HTTP orchestration. The Matrix Rust SDK binding provides Olm/Megolm and the key store. Synapse runs the server and stores events. Server event and log checks cover the example text in the tested flow. [Architecture and threat boundary](technical-design.md)
 
-Açık sohbet `Bağlı`, `Yeniden bağlanıyor` ve `Geçmiş tamamlanıyor` durumlarını gösterir. Geçici hatalarda yaklaşık yarım saniyeden sekiz saniyeye kadar bekler. Beş otomatik deneme sonrasında veya yetki ve protokol hatasında canlı okuma durur. Canlı sohbette `/yenile` ile elle dene.
+## Live chat and pending sends
 
-Sonucu belirsiz gönderim için canlı sohbette `/tekrar`, ana ekranda `/tekrar !ODA` kullan. `/bekleyenler` oda kimliğini gösterir. Yerel takibi bırakmak için canlı sohbette `/vazgec`, ana ekranda `/vazgec !ODA` çalıştır ve `evet` yaz. Mesaj ulaşmış olabilir ve sunucudaki olay korunur. Çıkışta belirsiz gönderim sayısı bildirilir. Sunucu kabulü yalnızca Matrix olayının kaydedildiğini gösterir.
+Live chat shows connected, reconnecting, and catch-up status. For transient failures, delays range from roughly half a second to eight seconds. Live reading pauses after five automatic attempts or when an authorization or protocol error occurs. Use `/refresh` in live chat to resume manually.
 
-Bracketed paste desteği olan terminaller çok satırlı yapıştırmayı tek işlem olarak işaretler. Heartwood bu bloğu reddedip zil sinyali verir. Çerçevesiz girişte terminal ardışık tuşlar ile yapıştırmayı ayırt edemez. POSIX PTY senaryosu Linux ve WSL'de çalışır.
+For an uncertain send, use `/retry` in live chat or `/retry !ROOM` from the main prompt. `/pending` shows room IDs. To drop local tracking, run `/discard` in live chat or `/discard !ROOM` at the main prompt. Confirm with `yes` or `evet` in either interface language. The message may have reached the server and any server event remains. On exit, Heartwood reports the number of uncertain sends. Server acceptance confirms that Matrix stored the event.
 
-## Eski mesajları oku
+Terminals with bracketed paste mark a multiline paste as one operation. Heartwood rejects that block and rings the terminal bell. Without framing, the terminal sees paste and sequential keystrokes as the same input. The POSIX PTY scenario runs on Linux and WSL.
 
-Canlı sohbetten `/geri` ile ana komut ekranına dön. `/gecmis !ODA` ile başla ve devam bildirimi varsa `/onceki !ODA` çalıştır. `!ODA` yerine tam oda kimliğini yaz. Her komut en fazla 50 ham Matrix olayı ister. Bir sayfada daha az metin mesajı veya hiç gösterilebilir mesaj olmayabilir. Boş sayfada devam bildirimi görünüyorsa `/onceki` ile ilerle.
+## Read older messages
 
-`/gecmis` o odanın gezinmesini baştan başlatır. Bağlantı hatası veya ilerlemeyen sunucu imleci, son başarılı sayfanın devam konumunu değiştirmez. Gezinme oturum boyunca oda başına bellekte tutulur ve çıkışta silinir.
+From live chat, use `/back` to return to the main prompt. Start with `/history !ROOM` and use `/older !ROOM` if a continuation notice appears. Substitute the full room ID for `!ROOM`. Each command requests up to 50 raw Matrix events. A page may show fewer text messages or no displayable messages. If an empty page has a continuation notice, continue with `/older`.
+
+`/history` starts room navigation over. A connection failure or server cursor that fails to advance preserves the last successful continuation position. The navigation cursor is held in memory per room for the session and cleared on exit.
