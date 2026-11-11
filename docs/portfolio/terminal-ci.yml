@@ -1,2 +1,4 @@
+# The active Heartwood CI definition is ../../.github/workflows/terminal.yml.
+# See ci-cd-guide.md for setup and release steps.
 # Heartwood'un etkin CI tanımı ../../.github/workflows/terminal.yml dosyasındadır.
-# Kurulum ve yayın adımları için ci-cd-guide.md dosyasını aç.
+# Kurulum ve yayın adımları için ci-cd-guide.tr.md dosyasını aç.

@@ -1,21 +1,10 @@
+import { HeartwoodError, MatrixFailure, MatrixTransportFailure } from './failures.ts';
 import { matrixOrigin } from './policy.ts';
 import { AsyncLocalStorage } from 'node:async_hooks';
 
 export const part = encodeURIComponent;
 
-export class MatrixTransportFailure extends Error {
-  constructor() { super('Sunucu bağlantısı kurulamadı veya istek zaman aşımına uğradı.'); }
-}
-
-export class MatrixFailure extends Error {
-  readonly status: number;
-  readonly code: string;
-  constructor(status: number, code: string) {
-    super(`Matrix isteği başarısız (${status}, ${code}).`);
-    this.status = status;
-    this.code = code;
-  }
-}
+export { MatrixFailure, MatrixTransportFailure } from './failures.ts';
 
 export class MatrixHttp {
   readonly origin: string;
@@ -48,12 +37,12 @@ export class MatrixHttp {
       for (const controller of parent) controller.throwIfAborted();
       throw new MatrixTransportFailure();
     }
-    if (response.status >= 300 && response.status < 400) throw new Error('Matrix yönlendirmesi reddedildi.');
+    if (response.status >= 300 && response.status < 400) throw new HeartwoodError('matrixRedirect');
     const value = await response.json().catch((error: unknown) => {
       for (const controller of parent) controller.throwIfAborted();
       if (response.status >= 400) throw new MatrixFailure(response.status, 'UNKNOWN');
       if (!(error instanceof SyntaxError)) throw new MatrixTransportFailure();
-      throw new Error('Sunucu geçerli bir JSON yanıtı döndürmedi.');
+      throw new HeartwoodError('matrixInvalidJson');
     }) as T;
     return {status: response.status, value};
   }
@@ -78,14 +67,14 @@ export async function register(http: MatrixHttp, username: string, password: str
   const stages = flows?.find(flow => flow.stages[0] === 'm.login.registration_token' &&
     (flow.stages.length === 1 || (flow.stages.length === 2 && flow.stages[1] === 'm.login.dummy')))?.stages;
   if (challenge.status !== 401 || !session || !stages) {
-    throw new Error('Sunucuda belirteçli kayıt akışı bulunamadı.');
+    throw new HeartwoodError('registrationFlowMissing');
   }
   const result = await http.json<Challenge>('POST', 'register', {
     ...registration, auth: { type: stages[0], token, session },
   });
   if (result.status >= 200 && result.status < 300) return;
   if (result.status !== 401 || stages.length !== 2 || !result.value.completed?.includes(stages[0])) {
-    throw new Error('Kayıt belirteci doğrulanamadı.');
+    throw new HeartwoodError('registrationTokenRejected');
   }
   await http.request('POST', 'register', { ...registration, auth: { type: stages[1], session } });
 }
@@ -96,7 +85,7 @@ export async function login(http: MatrixHttp, username: string, password: string
     device_id: device, initial_device_display_name: 'Heartwood Terminal',
   });
   if (session.device_id !== device || !session.access_token || !/^@[^:]+:\S+$/.test(session.user_id)) {
-    throw new Error('Sunucu beklenen oturum veya cihaz kimliğini döndürmedi.');
+    throw new HeartwoodError('invalidLoginSession');
   }
   http.token = session.access_token;
   return session;

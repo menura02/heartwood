@@ -1,3 +1,4 @@
+import { HeartwoodError } from './failures.ts';
 import { ChatFeed } from './chat-feed.ts';
 import type { ChatLine } from './chat-feed.ts';
 import type { HistoryEvent, RawHistoryPage } from './history.ts';
@@ -21,11 +22,11 @@ export class LiveTimeline {
   }
 
   async poll(read: (cursor: string) => Promise<RawHistoryPage>, decode: Decode): Promise<ChatLine[]> {
-    if (this.reading) throw new Error('Canlı sohbet okuması sürüyor.');
+    if (this.reading) throw new HeartwoodError('liveReadPending');
     this.reading = true;
     try {
       const {events, next} = await read(this.cursor);
-      if (next !== undefined && this.recentCursors.has(next)) throw new Error('Canlı sohbet imleci ilerlemedi.');
+      if (next !== undefined && this.recentCursors.has(next)) throw new HeartwoodError('liveCursorStalled');
       const lines = await this.show([...this.unresolved.values(), ...events], decode);
       if (next !== undefined) {
         this.cursor = next;

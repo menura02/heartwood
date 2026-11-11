@@ -1,3 +1,4 @@
+import { HeartwoodError } from './failures.ts';
 import { MatrixFailure } from './matrix.ts';
 
 export type SendResult = {status: 'accepted'; eventId: string} | {status: 'uncertain'};
@@ -12,18 +13,18 @@ export class SendAttempts<T> {
 
   prepareDiscard(room: string): () => void {
     const slot = this.rooms.get(room);
-    if (slot?.busy) throw new Error('Gönderim işlemi sürüyor.');
-    if (!slot || slot.prepared === undefined) throw new Error('Bekleyen gönderim yok.');
+    if (slot?.busy) throw new HeartwoodError('sendInProgress');
+    if (!slot || slot.prepared === undefined) throw new HeartwoodError('noPendingSend');
     return () => {
-      if (this.rooms.get(room) !== slot) throw new Error('Bekleyen gönderim değişti.');
-      if (slot.busy) throw new Error('Gönderim işlemi sürüyor.');
+      if (this.rooms.get(room) !== slot) throw new HeartwoodError('pendingSendChanged');
+      if (slot.busy) throw new HeartwoodError('sendInProgress');
       this.rooms.delete(room);
     };
   }
 
   async start(room: string, prepare: () => Promise<T>, submit: Submit<T>): Promise<SendResult> {
-    if (this.rooms.has(room)) throw new Error('Bu odada bekleyen gönderim var. /tekrar kullan.');
-    if (this.rooms.size >= 32) throw new Error('Bekleyen gönderim sınırına ulaşıldı.');
+    if (this.rooms.has(room)) throw new HeartwoodError('pendingSendExists');
+    if (this.rooms.size >= 32) throw new HeartwoodError('pendingSendLimit');
     const slot: {busy: boolean; prepared?: T} = {busy: true};
     this.rooms.set(room, slot);
     try {
@@ -39,8 +40,8 @@ export class SendAttempts<T> {
 
   async retry(room: string, authorize: (prepared: T) => Promise<void>, submit: Submit<T>): Promise<SendResult> {
     const slot = this.rooms.get(room);
-    if (slot?.busy) throw new Error('Gönderim işlemi sürüyor.');
-    if (!slot || slot.prepared === undefined) throw new Error('Bekleyen gönderim yok.');
+    if (slot?.busy) throw new HeartwoodError('sendInProgress');
+    if (!slot || slot.prepared === undefined) throw new HeartwoodError('noPendingSend');
     slot.busy = true;
     try {
       await authorize(slot.prepared);

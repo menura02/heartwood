@@ -16,17 +16,24 @@ import urllib.parse
 
 
 class Terminal:
-    def __init__(self, node, home, account, origin):
+    def __init__(self, node, home, account, origin, turkish=False):
         self.master, self.slave = pty.openpty()
         termios.tcsetwinsize(self.slave, (30, 100))
         self.flags = termios.tcgetattr(self.slave)[3]
         self.output = bytearray()
         self.offset = 0
         self.profile = home / ".heartwood" / account
+        self.turkish = turkish
+        self.chat_prompt = "sohbet> " if turkish else "chat> "
+        environment = {**os.environ, "HOME": str(home), "TERM": "xterm-256color"}
+        environment.pop("HEARTWOOD_LANG", None)
+        startup = ["--lang", "tr", "kayit"] if turkish else ["register"]
+        if turkish:
+            environment["HEARTWOOD_LANG"] = "en"
         self.child = subprocess.Popen(
-            [node, "src/cli.ts", "kayit", account, origin, account],
+            [node, "src/cli.ts", *startup, account, origin, account],
             stdin=self.slave, stdout=self.slave, stderr=self.slave,
-            env={**os.environ, "HOME": str(home), "TERM": "xterm-256color"},
+            env=environment,
         )
 
     def drain(self, timeout):
@@ -54,14 +61,17 @@ class Terminal:
     def command(self, value):
         self.type(value + "\r")
 
+    def expect_ui(self, english, turkish):
+        return self.expect(turkish if self.turkish else english)
+
     def register(self, password, token, passphrase):
-        self.expect("Hesap parolası:")
+        self.expect_ui("Account password:", "Hesap parolası:")
         self.command(password)
-        self.expect("Kayıt belirteci:")
+        self.expect_ui("Registration token:", "Kayıt belirteci:")
         self.command(token)
-        self.expect("Yerel kripto deposu parolası:")
+        self.expect_ui("Local crypto store passphrase:", "Yerel kripto deposu parolası:")
         self.command(passphrase)
-        self.expect("Depo parolasını tekrar girin:")
+        self.expect_ui("Repeat the store passphrase:", "Depo parolasını tekrar girin:")
         self.command(passphrase)
         self.expect("heartwood> ")
         for secret in [password, token, passphrase]:
@@ -138,46 +148,50 @@ def scenario(node, origin, root, token):
         home = pathlib.Path(root) / "pty-home"
         alice = Terminal(node, home, "ptyalice", relayed)
         stack.callback(alice.close)
-        bob = Terminal(node, home, "ptybob", origin)
+        bob = Terminal(node, home, "ptybob", origin, turkish=True)
         stack.callback(bob.close)
         for terminal, name in [(alice, "alice"), (bob, "bob")]:
             terminal.register("pty-password-" + name, token, "pty-passphrase-" + name)
-            terminal.command("/kimlik")
-            terminal.expect("Hesap @pty")
+            terminal.command("/kimlik" if terminal is alice else "/identity")
+            terminal.expect_ui("Account @pty", "Hesap @pty")
             terminal.code = terminal.expect(rb"((?:[0-9a-f]{8} ){7}[0-9a-f]{8})")[1].decode()
             terminal.expect("heartwood> ")
 
         alice.command("/gecersiz")
-        alice.expect("Bilinmeyen komut")
+        alice.expect("Unknown command")
         alice.expect("heartwood> ")
-        alice.command("/davet @ptybob:localhost")
+        bob.command("/unknown")
+        bob.expect("Bilinmeyen komut")
+        bob.expect("heartwood> ")
+        alice.command("/invite @ptybob:localhost")
         room = alice.expect(rb"(![A-Za-z0-9_-]+(?::localhost)?)")[1].decode()
         alice.expect("heartwood> ")
         bob.command("/kabul " + room)
         bob.expect("İstek kabul edildi.")
         bob.expect("heartwood> ")
         for terminal, peer, name in [(alice, bob, "ptybob"), (bob, alice, "ptyalice")]:
-            terminal.command(f"/dogrula @{name}:localhost {peer.code}")
-            terminal.expect("Cihaz kodu doğrulandı.")
+            command = "/verify" if terminal is alice else "/dogrula"
+            terminal.command(f"{command} @{name}:localhost {peer.code}")
+            terminal.expect_ui("Device code verified.", "Cihaz kodu doğrulandı.")
             terminal.expect("heartwood> ")
-            terminal.command("/sohbet " + room)
-            terminal.expect("sohbet> ")
+            terminal.command("/sohbet " + room if terminal is alice else "/chat " + room)
+            terminal.expect(terminal.chat_prompt)
 
         fail_sync.set()
-        alice.expect("Yeniden bağlanıyor…")
-        alice.expect("Bağlı.")
-        alice.expect("sohbet> ")
+        alice.expect("Reconnecting…")
+        alice.expect("Connected.")
+        alice.expect(alice.chat_prompt)
         draft = "Yazıyorum çığ 🚲 " + "a" * 120
         alice.type(draft)
         bob.command("Türkçe bildirim şüÖ 🚀")
         bob.expect("Şifreli olay sunucu tarafından kabul edildi.")
-        bob.expect("sohbet> ")
+        bob.expect(bob.chat_prompt)
         notification = alice.expect("@ptybob:localhost  Türkçe bildirim şüÖ 🚀")
-        redraw = alice.expect("sohbet> " + draft)
+        redraw = alice.expect(alice.chat_prompt + draft)
         assert b"\r\n\r\n" in alice.output[notification.end():redraw.start()], "Wrapped redraw erased its notification row"
         alice.type("\r")
-        alice.expect("Şifreli olay sunucu tarafından kabul edildi.")
-        alice.expect("sohbet> ")
+        alice.expect("The server accepted the encrypted event.")
+        alice.expect(alice.chat_prompt)
         bob.expect("@ptyalice:localhost  " + draft)
 
         alice.type("\x1b[200~")
@@ -191,10 +205,16 @@ def scenario(node, origin, root, token):
         assert request_held.wait(5), "No live request to cancel"
         alice.type("\x03")
         alice.assert_exit()
+        bob.command("/back")
+        bob.expect("heartwood> ")
+        bob.command("/gecmis " + room)
+        bob.expect("Geçmiş sayfası 1")
+        bob.expect("@ptyalice:localhost  Yapıştırma sonrası çalışıyor")
+        bob.expect("heartwood> ")
         bob.command("/cikis")
         bob.assert_exit()
 
 
 if __name__ == "__main__":
     scenario(sys.argv[1], sys.argv[2], sys.argv[3], os.environ["HEARTWOOD_TEST_REGISTRATION_TOKEN"])
-    print("Linux PTY: secret entry, redraw, Unicode, paste, reconnect and exit passed.")
+    print("Linux PTY: both locales, aliases, secrets, redraw, Unicode, reconnect, history and exit passed.")

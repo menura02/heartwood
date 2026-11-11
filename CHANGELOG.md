@@ -1,23 +1,39 @@
-# Değişiklik kaydı
+[English](CHANGELOG.md) | [Türkçe](CHANGELOG.tr.md)
+
+# Changelog
+
+## 0.4.0
+
+### Added
+
+- The terminal client and local Synapse lab offer English and Turkish interfaces. English is the default. The `--lang en|tr` flag takes precedence over the `HEARTWOOD_LANG` environment variable.
+- Added English `register` and `login` startup commands and English interactive commands.
+- Current documentation and the source package installation guide are available in both languages. GitHub draft releases contain English and Turkish release notes.
+
+### Compatibility
+
+- Existing Turkish startup and interactive commands work in both interface languages. Set the language explicitly in scripts that match terminal output.
 
 ## 0.3.0
 
-### Eklenenler
+_English translation of the original Turkish entry._
 
-- Canlı sohbet bağlantı ve geçmiş tamamlama durumlarını gösterir. Geçici bağlantı hatalarında sınırlı süreyle otomatik dener. `/yenile` ile elle devam edilebilir.
-- `/bekleyenler` belirsiz gönderimlerin oda kimliklerini gösterir. `/vazgec` açık onayla yerel takibi bırakır. Mesaj sunucuya ulaşmış olabilir. `/tekrar` aynı işlem kimliğini ve şifreli yükü kullanır.
-- Windows ve Linux için tip kontrolü ve birim testleri, Linux için ayrı Synapse ve POSIX PTY işleri eklendi.
+### Added
 
-### Düzeltmeler
+- Live chat shows connection and history catch-up status. It retries transient connection failures for a limited time. Use `/yenile` to resume manually.
+- `/bekleyenler` shows room IDs for uncertain sends. `/vazgec` drops local tracking after explicit confirmation. The message may have reached the server. `/tekrar` uses the original transaction ID and encrypted payload.
+- Added Windows and Linux type checks and unit tests, plus separate Synapse and POSIX PTY steps on Linux.
 
-- Gizli girişler ekrana yansımaz. Gelen bildirimler yazılan taslağı korur. Terminal tarafından işaretlenen çok satırlı yapıştırma bütünüyle reddedilir.
-- Ctrl+C ve normal çıkış, terminali ve profil kilidini bırakır. Çıkış sırasında canlı HTTP çağrısı iptal edilir.
+### Fixed
 
-### Uyumluluk
+- Secret input stays hidden. Incoming notifications preserve the draft. Multiline paste identified by the terminal is rejected in full.
+- Ctrl+C and normal exit release the terminal and profile lock. Exit aborts an in-flight live HTTP request.
 
-- Mevcut profiller ve düz 64 haneli cihaz kodu girişi desteklenir. `/kimlik` çıktısı artık hesap, cihaz ve sekiz gruba ayrılmış tam kodu içerir. Çıktıyı metin olarak işleyen betikler biçimini güncellemelidir.
+### Compatibility
 
-### Bilinen sınırlamalar
+- Existing profiles and ungrouped 64-character device codes remain supported. `/kimlik` now displays the account, device and full code in eight groups. Scripts that parse the output need to account for the new format.
 
-- Bekleyen gönderimler süreç belleğinde tutulur. Çerçevesiz yapıştırma ardışık tuş girişinden ayırt edilemez.
-- Gerçek PTY testi Linux ve WSL'de çalışır. Windows yerel PTY davranışı bu testle doğrulanmadı.
+### Known limitations
+
+- Pending sends are held in process memory. Unframed paste is indistinguishable from sequential keystrokes.
+- The real PTY test runs on Linux and WSL. Native Windows PTY behavior was outside that test's coverage.

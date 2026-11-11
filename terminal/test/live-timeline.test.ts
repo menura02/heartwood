@@ -33,7 +33,7 @@ test('failed and repeated cursors preserve position and unresolved events can re
   const timeline = new LiveTimeline('a');
   await timeline.initial([event(1)], async () => ({id: '$1', sender: '@peer:localhost'}));
   await assert.rejects(timeline.poll(async () => { throw new Error('network'); }, decode), /network/);
-  await assert.rejects(timeline.poll(async () => ({events: [], next: 'a'}), decode), /ilerlemedi/);
+  await assert.rejects(timeline.poll(async () => ({events: [], next: 'a'}), decode), {code: 'liveCursorStalled'});
   assert.deepEqual(await timeline.poll(async cursor => {
     assert.equal(cursor, 'a');
     return {events: [], next: 'b'};
@@ -55,7 +55,7 @@ test('overlapping reads are rejected and only the first result advances the curs
   const timeline = new LiveTimeline('start');
   const delayed = Promise.withResolvers<{events: HistoryEvent[]; next: string}>();
   const first = timeline.poll(() => delayed.promise, decode);
-  await assert.rejects(timeline.poll(async () => ({events: [], next: 'other'}), decode), /sürüyor/);
+  await assert.rejects(timeline.poll(async () => ({events: [], next: 'other'}), decode), {code: 'liveReadPending'});
   delayed.resolve({events: [event(1)], next: 'next'});
   assert.deepEqual(await first, [await decode(event(1))]);
   await timeline.poll(async cursor => {

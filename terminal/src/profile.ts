@@ -1,3 +1,4 @@
+import { HeartwoodError } from './failures.ts';
 import { lstat, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -28,7 +29,7 @@ export class Profile {
 
   static async open(name: string, origin: string, username: string, root = join(homedir(), '.heartwood')): Promise<Profile> {
     if (!/^[a-z0-9][a-z0-9_-]{0,31}$/.test(name) || !/^[a-z0-9._=-]{1,64}$/.test(username)) {
-      throw new Error('Profil veya kullanıcı adı geçersiz.');
+      throw new HeartwoodError('invalidProfileOrUsername');
     }
     const path = join(root, name);
     await mkdir(path, { recursive: true, mode: 0o700 });
@@ -44,12 +45,12 @@ export class Profile {
             if (failure.code === 'ENOENT') return false;
             throw failure;
           });
-          if (exists) throw new Error('Profil kaydı eksik. Mevcut dosyalar korunuyor.');
+          if (exists) throw new HeartwoodError('profileRecordMissing');
         }
         data = { origin, username, device: randomUUID(), pins: {}, blocked: [] };
       }
       if (data.origin !== origin || data.username !== username) {
-        throw new Error('Bu profil farklı bir sunucuya veya kullanıcıya bağlı.');
+        throw new HeartwoodError('profileBindingMismatch');
       }
       const profile = new Profile(path, data, release);
       await profile.save();

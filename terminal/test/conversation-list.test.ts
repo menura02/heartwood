@@ -10,10 +10,10 @@ test('a refreshed list never reassigns an old number to a different conversation
   assert.equal(list.select('2').room, bob.room);
   const next = list.replace([bob, {room: '!c', peer: '@carol:localhost', verified: undefined}]);
   assert.deepEqual(next.map(item => item.number), [2, 3]);
-  assert.throws(() => list.select('1'), /seçim/);
-  assert.throws(() => list.select('2e0'), /seçim/);
+  assert.throws(() => list.select('1'), {code: 'invalidConversationSelection'});
+  assert.throws(() => list.select('2e0'), {code: 'invalidConversationSelection'});
   assert.equal(list.select('2').peer, bob.peer);
   list.replace([{...bob, peer: '@other:localhost'}]);
-  assert.throws(() => list.select('2'), /seçim/);
+  assert.throws(() => list.select('2'), {code: 'invalidConversationSelection'});
   assert.equal(list.select('4').peer, '@other:localhost');
 });

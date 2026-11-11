@@ -1,3 +1,4 @@
+import { HeartwoodError } from './failures.ts';
 import { randomUUID } from 'node:crypto';
 import { lstat, mkdir, readFile, readdir, rename, rmdir, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -13,8 +14,8 @@ export async function acquireProfileLock(profile: string): Promise<() => Promise
     try {
       database.exec('BEGIN IMMEDIATE');
     } catch (error) {
-      if ((error as {errcode?: number}).errcode === 5) throw new Error('Profil kullanımda.');
-      throw new Error('Profil kilidinin güvenli durumu belirlenemedi.');
+      if ((error as {errcode?: number}).errcode === 5) throw new HeartwoodError('profileInUse');
+      throw new HeartwoodError('profileLockFailed');
     }
     const created = await mkdir(guard).then(() => true).catch((error: NodeJS.ErrnoException) => {
       if (error.code === 'EEXIST') return false;
@@ -28,7 +29,7 @@ export async function acquireProfileLock(profile: string): Promise<() => Promise
         if ((await readdir(guard)).length !== 1) return false;
         return await readFile(join(guard, marker), 'utf8') === protocol;
       })().catch(() => false);
-      if (!known) throw new Error('Profilde eski veya belirsiz bir kilit var. Tüm istemcileri kapatıp kilidi incele.');
+      if (!known) throw new HeartwoodError('profileLockUncertain');
     }
   } catch (error) {
     database.close();

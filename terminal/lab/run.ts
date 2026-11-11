@@ -5,6 +5,10 @@ import { createServer } from 'node:net';
 import { basename, dirname, join } from 'node:path';
 import { setTimeout as wait } from 'node:timers/promises';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { formatError, HeartwoodError } from '../src/failures.ts';
+import { selectLanguage } from '../src/locale.ts';
+import type { Language } from '../src/locale.ts';
+import { labMessage } from './messages.ts';
 
 const lab = dirname(fileURLToPath(import.meta.url));
 
@@ -26,7 +30,7 @@ async function json<T>(origin: string, path: string, body?: object, token?: stri
     redirect: 'error',
     signal: AbortSignal.timeout(2_000),
   });
-  if (!response.ok) throw new Error(`Laboratuvar API isteği reddedildi (${response.status}).`);
+  if (!response.ok) throw new HeartwoodError('labRequestFailed');
   return await response.json() as T;
 }
 
@@ -40,15 +44,18 @@ async function registrationToken(origin: string, secret: string): Promise<string
   const {token} = await json<{token: string}>(origin, '/_synapse/admin/v1/registration_tokens/new', {
     uses_allowed: 3, expiry_time: Date.now() + 30 * 60_000,
   }, admin.access_token);
-  if (typeof token !== 'string' || !token) throw new Error('Kayıt belirteci alınamadı.');
+  if (typeof token !== 'string' || !token) throw new HeartwoodError('labTokenMissing');
   return token;
 }
 
 export async function startLab(port: number, fast = false) {
   const python = process.env.HEARTWOOD_SYNAPSE_PYTHON;
-  if (!python) throw new Error('HEARTWOOD_SYNAPSE_PYTHON ile Synapse 1.164.2 Python yolunu belirt.');
-  if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new Error('Geçersiz laboratuvar portu.');
-  await checkPort(port);
+  if (!python) throw new HeartwoodError('labPythonMissing');
+  if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new HeartwoodError('labInvalidPort');
+  await checkPort(port).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === 'EADDRINUSE') throw new HeartwoodError('labPortInUse');
+    throw error;
+  });
   const parent = join(lab, '..', '.lab');
   await mkdir(parent, {recursive: true, mode: 0o700});
   const directory = await mkdtemp(join(parent, 'synapse-run-'));
@@ -77,7 +84,7 @@ export async function startLab(port: number, fast = false) {
     stop = async () => {
       child.stdin.end();
       await Promise.race([exited, wait(15_000, undefined, {ref: false})]);
-      if (!finished) throw new Error('Laboratuvar sürecinin durduğu doğrulanamadı.');
+      if (!finished) throw new HeartwoodError('labStopUnconfirmed');
       await rm(directory, {recursive: true, force: true, maxRetries: 8, retryDelay: 200});
     };
     const deadline = Date.now() + 30_000;
@@ -88,7 +95,7 @@ export async function startLab(port: number, fast = false) {
       if (ready) break;
       await wait(250);
     }
-    if (!ready || finished) throw new Error('Synapse hazır olmadı. Python yolunu ve 1.164.2 kurulumunu kontrol et.');
+    if (!ready || finished) throw new HeartwoodError('labNotReady');
     return {origin, token: await registrationToken(origin, secret), logPath: join(directory, 'homeserver.log'),
       directory, exited, stop};
   } catch (error) {
@@ -98,18 +105,18 @@ export async function startLab(port: number, fast = false) {
   }
 }
 
-async function demo() {
-  const lab = await startLab(Number(process.argv[2] ?? '18008'));
+async function demo(language: Language, args: string[]) {
+  const lab = await startLab(Number(args[0] ?? '18008'));
   let shutdown!: () => void;
   const signal = new Promise<void>(resolve => { shutdown = resolve; });
   process.once('SIGINT', shutdown);
   process.once('SIGTERM', shutdown);
   try {
-    console.log(`Synapse hazır ${lab.origin}`);
-    console.log(`30 dakikalık kayıt belirteci ${lab.token}`);
-    console.log('Laboratuvarı kapatmak için Ctrl+C.');
+    console.log(labMessage(language, 'ready', {origin: lab.origin}));
+    console.log(labMessage(language, 'registrationToken', {token: lab.token}));
+    console.log(labMessage(language, 'stop'));
     const requestedStop = await Promise.race([signal.then(() => true), lab.exited.then(() => false)]);
-    if (!requestedStop) throw new Error('Synapse laboratuvarı beklenmedik biçimde kapandı.');
+    if (!requestedStop) throw new HeartwoodError('labExited');
   } finally {
     process.off('SIGINT', shutdown);
     process.off('SIGTERM', shutdown);
@@ -118,8 +125,13 @@ async function demo() {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  demo().catch(error => {
-    console.error(error instanceof Error ? error.message : 'Laboratuvar hatası.');
+  let language: Language = 'en';
+  try {
+    const selection = selectLanguage(process.argv.slice(2), process.env.HEARTWOOD_LANG);
+    language = selection.language;
+    await demo(language, selection.args);
+  } catch (error) {
+    console.error(formatError(error, language));
     process.exitCode = 1;
-  });
+  }
 }

@@ -1,3 +1,4 @@
+import { HeartwoodError } from './failures.ts';
 export interface Conversation { room: string; peer: string; verified: boolean | undefined }
 interface NumberedConversation extends Conversation { number: number }
 
@@ -19,7 +20,7 @@ export class ConversationList {
 
   select(value: string): NumberedConversation {
     const conversation = /^[1-9][0-9]*$/.test(value) ? this.current.get(Number(value)) : undefined;
-    if (!conversation) throw new Error('Geçersiz seçim. /sohbetler ile listeyi aç.');
+    if (!conversation) throw new HeartwoodError('invalidConversationSelection');
     return conversation;
   }
 }

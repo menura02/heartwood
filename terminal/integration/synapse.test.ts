@@ -17,9 +17,9 @@ function rpc<T>(worker: ChildProcess, op: string, args: Record<string, unknown> 
       worker.off('message', replied);
       reject(new Error(`Fixture process exited during ${op} (${code}).`));
     };
-    const replied = (reply: { value?: T; error?: string }) => {
+    const replied = (reply: { value?: T; error?: string; code?: string }) => {
       worker.off('exit', exited);
-      if (reply.error) reject(new Error(reply.error));
+      if (reply.error) reject(Object.assign(new Error(reply.error), {code: reply.code}));
       else resolve(reply.value as T);
     };
     worker.once('message', replied);
@@ -28,7 +28,7 @@ function rpc<T>(worker: ChildProcess, op: string, args: Record<string, unknown> 
   });
 }
 
-test('Synapse: şifreli sohbet, çevrimdışı teslim, sayfalı geçmiş ve erişim sınırları', {timeout: 300_000}, async context => {
+test('Synapse: encrypted chat, offline delivery, paginated history and access boundaries', {timeout: 300_000}, async context => {
   const origin = process.env.HEARTWOOD_TEST_ORIGIN;
   const token = process.env.HEARTWOOD_TEST_REGISTRATION_TOKEN;
   assert.ok(origin && token, 'Use a disposable Synapse and supply the two integration environment variables.');
@@ -85,15 +85,15 @@ test('Synapse: şifreli sohbet, çevrimdışı teslim, sayfalı geçmiş ve eri�
   await assert.rejects(rpc(outsider.worker, 'accept', {room}));
   await rpc(bob.worker, 'accept', {room});
   await assert.rejects(rpc(outsider.worker, 'history', {room}));
-  await assert.rejects(rpc(alice.worker, 'send', {room, text: 'unverified'}), /doğrulanmadı/);
+  await assert.rejects(rpc(alice.worker, 'send', {room, text: 'unverified'}), {code: 'deviceNotVerified'});
   assert.deepEqual(await rpc(alice.worker, 'status', {room}), {peer: bob.identity.user, verified: false});
-  await assert.rejects(rpc(alice.worker, 'verify', {peer: bob.identity.user, text: '0'.repeat(64)}), /eşleşmedi/);
+  await assert.rejects(rpc(alice.worker, 'verify', {peer: bob.identity.user, text: '0'.repeat(64)}), {code: 'deviceCodeMismatch'});
   const bobCode = deviceCode(bob.identity);
   await rpc(alice.worker, 'verify', {peer: bob.identity.user, text: bobCode});
   await rpc(bob.worker, 'verify', {peer: alice.identity.user, text: deviceCode(alice.identity)});
   assert.deepEqual(await rpc(alice.worker, 'status', {room}), {peer: bob.identity.user, verified: true});
   await assert.rejects(rpc(alice.worker, 'send', {room, peer: outsider.identity.user, text: 'wrong conversation'}),
-    /karşı tarafı değişti/);
+    {code: 'chatPeerChanged'});
   const conversations = await rpc<{rooms: Array<{room: string; peer: string; verified: boolean}>; unavailable: number}>(
     alice.worker, 'conversations');
   assert.deepEqual(conversations.rooms, [{room, peer: bob.identity.user, verified: true}]);
@@ -109,7 +109,7 @@ test('Synapse: şifreli sohbet, çevrimdışı teslim, sayfalı geçmiş ve eri�
   await rpc(bob.worker, 'send', {room, text: response});
   assert.ok((await rpc<Line[]>(alice.worker, 'history', {room})).some(event => event.body === response), 'reply decrypted');
   await close('bob');
-  await assert.rejects(open('bob', false, randomUUID()), /Kripto deposu açılamadı/);
+  await assert.rejects(open('bob', false, randomUUID()), {code: 'cryptoStoreOpenFailed'});
   await close('bob');
   bob = await open('bob', false);
   assert.ok((await rpc<Line[]>(bob.worker, 'history', {room})).some(event => event.body === marker), 'history survives reopening');
@@ -180,7 +180,7 @@ test('Synapse: şifreli sohbet, çevrimdışı teslim, sayfalı geçmiş ve eri�
     assert.ok(!log.includes(lostMessage), 'retry fixture plaintext absent in selected server log');
   }
   await open('bob-extra', false, passphrase, 'bob');
-  await assert.rejects(rpc(alice.worker, 'send', {room, text: 'extra device'}), /Birden çok cihaz/);
+  await assert.rejects(rpc(alice.worker, 'send', {room, text: 'extra device'}), {code: 'tooManyDevices'});
   await close('bob-extra');
   await rpc(bob.worker, 'block', {peer: alice.identity.user});
   assert.ok(!(await rpc<string[]>(bob.worker, 'rooms')).includes(room));
@@ -188,7 +188,7 @@ test('Synapse: şifreli sohbet, çevrimdışı teslim, sayfalı geçmiş ve eri�
   await assert.rejects(rpc(bob.worker, 'live-refresh', {room}));
   await assert.rejects(rpc(bob.worker, 'send-live', {text: 'blocked-live'}));
   assert.deepEqual(await rpc(bob.worker, 'conversations'), {rooms: [], unavailable: 0});
-  await assert.rejects(rpc(bob.worker, 'invite', {peer: alice.identity.user}), /engelli/);
+  await assert.rejects(rpc(bob.worker, 'invite', {peer: alice.identity.user}), {code: 'peerBlocked'});
   await assert.rejects(rpc(alice.worker, 'send', {room, text: 'blocked'}));
   const blocked = await rpc<string>(alice.worker, 'invite', {peer: bob.identity.user});
   assert.ok(!(await rpc<Invite[]>(bob.worker, 'pending')).some(invite => invite.room === blocked));

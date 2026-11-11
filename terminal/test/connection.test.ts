@@ -1,15 +1,16 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { LiveRecovery } from '../src/connection.ts';
+import { formatError } from '../src/failures.ts';
 import { MatrixFailure, MatrixTransportFailure, MatrixHttp } from '../src/matrix.ts';
 
 test('temporary failures use bounded jitter and success resets the next delay', () => {
   const recovery = new LiveRecovery(() => 0.5);
   const failure = new MatrixTransportFailure();
-  assert.deepEqual(recovery.fail(failure), {delay: 500, status: 'Yeniden bağlanıyor…'});
+  assert.deepEqual(recovery.fail(failure), {delay: 500, status: 'reconnecting'});
   assert.deepEqual(recovery.fail(failure), {delay: 1000});
-  assert.deepEqual(recovery.success(true), {delay: 50, status: 'Geçmiş tamamlanıyor…'});
-  assert.deepEqual(recovery.success(false), {delay: 1500, status: 'Bağlı.'});
+  assert.deepEqual(recovery.success(true), {delay: 50, status: 'catchingUp'});
+  assert.deepEqual(recovery.success(false), {delay: 1500, status: 'connected'});
   assert.equal(recovery.fail(failure).delay, 500);
   for (let i = 0; i < 4; i++) assert.ok(recovery.fail(failure).delay! <= 8000);
   assert.equal(recovery.fail(failure).delay, undefined);
@@ -39,4 +40,29 @@ test('a truncated authorization response still pauses automatic reads', async t 
   }));
   const http = new MatrixHttp('http://127.0.0.1:18008');
   await assert.rejects(http.request('GET', 'sync'), {status: 403});
+});
+
+test('an unrecognized Matrix error code is retained for callers and hidden from its message', async t => {
+  t.mock.method(globalThis, 'fetch', async () =>
+    Response.json({errcode: 'M_PRIVATE_DETAIL', error: 'secret token'}, {status: 403}));
+  const http = new MatrixHttp('http://127.0.0.1:18008');
+  await assert.rejects(http.request('GET', 'sync'), (error: unknown) => {
+    assert.ok(error instanceof MatrixFailure);
+    assert.equal(error.status, 403);
+    assert.equal(error.code, 'M_PRIVATE_DETAIL');
+    for (const output of [error.message, formatError(error, 'tr')]) {
+      assert.match(output, /HW_MATRIX_REQUEST/);
+      assert.doesNotMatch(output, /M_PRIVATE_DETAIL|secret token/);
+    }
+    assert.match(formatError(error, 'tr'), /^Matrix isteği başarısız oldu\./);
+    return true;
+  });
+});
+
+test('known Matrix errors have local messages and native errors get a safe fallback', () => {
+  const error = new MatrixFailure(401, 'M_UNKNOWN_TOKEN');
+  assert.match(formatError(error, 'en'), /Sign in again\./);
+  assert.match(formatError(error, 'tr'), /Yeniden giriş yap\./);
+  const native = new Error('private file and secret token');
+  assert.equal(formatError(native, 'tr'), 'Beklenmeyen bir hata oluştu. [HW_UNEXPECTED]');
 });

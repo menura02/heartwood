@@ -11,9 +11,9 @@ test('a profile is locked, bound to its account and reopened with the same devic
   try {
     const profile = await Profile.open('alice', origin, 'alice', root);
     const device = profile.data.device;
-    await assert.rejects(Profile.open('alice', origin, 'alice', root), /kullanımda/);
+    await assert.rejects(Profile.open('alice', origin, 'alice', root), {code: 'profileInUse'});
     await profile.close();
-    await assert.rejects(Profile.open('alice', origin, 'bob', root), /farklı/);
+    await assert.rejects(Profile.open('alice', origin, 'bob', root), {code: 'profileBindingMismatch'});
     const reopened = await Profile.open('alice', origin, 'alice', root);
     assert.equal(reopened.data.device, device);
     const saved = JSON.parse(await readFile(join(reopened.path, 'profile.json'), 'utf8')) as object;
