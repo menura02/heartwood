@@ -1,3 +1,4 @@
+import { HeartwoodError } from './failures.ts';
 import { createHash } from 'node:crypto';
 
 export interface DeviceIdentity { user: string; device: string; ed: string; curve: string }
@@ -5,11 +6,12 @@ export interface StateEvent { type: string; state_key: string; sender?: string; 
 export const megolm = 'm.megolm.v1.aes-sha2';
 
 export function matrixOrigin(value: string): string {
-  const url = new URL(value);
+  const url = URL.parse(value);
+  if (!url) throw new HeartwoodError('invalidMatrixOrigin');
   const loopback = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
   if (!(url.protocol === 'https:' || (url.protocol === 'http:' && loopback)) ||
       url.username || url.password || url.search || url.hash || url.pathname !== '/') {
-    throw new Error('HTTPS veya loopback HTTP sunucu adresi gerekli.');
+    throw new HeartwoodError('invalidMatrixOrigin');
   }
   return url.origin;
 }
@@ -17,7 +19,7 @@ export function matrixOrigin(value: string): string {
 export function localUser(value: string, self: string): string {
   const match = /^@[a-z0-9._=/-]+:(\S+)$/.exec(value);
   if (!match || match[1] !== self.slice(self.indexOf(':') + 1) || value === self) {
-    throw new Error('Aynı sunucudan farklı bir tam kullanıcı kimliği gerekli.');
+    throw new HeartwoodError('invalidPeerId');
   }
   return value;
 }
@@ -35,7 +37,7 @@ export function normalizeDeviceCode(code: string): string {
   if (code.length === 71 && /^(?:[0-9a-f]{8} ){7}[0-9a-f]{8}$/i.test(code)) {
     return code.replaceAll(' ', '').toLowerCase();
   }
-  throw new Error('Cihaz kodu biçimi geçersiz. Tam 64 onaltılık hane veya tek boşluklu sekiz grup gir.');
+  throw new HeartwoodError('invalidDeviceCode');
 }
 
 export function formatDeviceCode(code: string): string {
@@ -43,8 +45,8 @@ export function formatDeviceCode(code: string): string {
 }
 
 export function assertTrusted(pin: DeviceIdentity | undefined, actual: DeviceIdentity): void {
-  if (!pin) throw new Error('Karşı tarafın cihazı doğrulanmadı. /dogrula ile tam cihaz kodunu doğrula.');
-  if (deviceCode(pin) !== deviceCode(actual)) throw new Error('Doğrulanmış cihaz anahtarı değişti. İşlem durduruldu.');
+  if (!pin) throw new HeartwoodError('deviceNotVerified');
+  if (deviceCode(pin) !== deviceCode(actual)) throw new HeartwoodError('trustedDeviceChanged');
 }
 
 export function assertRoomSettings(state: StateEvent[]): void {
@@ -54,7 +56,7 @@ export function assertRoomSettings(state: StateEvent[]): void {
       content('m.room.join_rules')?.join_rule !== 'invite' ||
       content('m.room.history_visibility')?.history_visibility !== 'joined' ||
       content('m.room.create')?.['m.federate'] !== false) {
-    throw new Error('Beklenen özel Heartwood odası ve Megolm yapılandırması bulunamadı.');
+    throw new HeartwoodError('invalidRoomSettings');
   }
 }
 
@@ -66,14 +68,14 @@ export function assertRoom(state: StateEvent[], self: string): string {
   const peer = members.find(event => event.state_key !== self);
   if (members.length !== 2 || !peer || peer.content.membership !== 'join' ||
       own?.content.membership !== 'join') {
-    throw new Error('İki kişilik beklenen oda üyeliği sağlanmadı.');
+    throw new HeartwoodError('invalidRoomMembership');
   }
   return localUser(peer.state_key, self);
 }
 
 export function assertTargets(body: unknown, expected: DeviceIdentity[]): void {
   if (!body || typeof body !== 'object' || !('messages' in body) ||
-      !body.messages || typeof body.messages !== 'object') throw new Error('Geçersiz anahtar dağıtımı.');
+      !body.messages || typeof body.messages !== 'object') throw new HeartwoodError('invalidKeyDistribution');
   const targets = Object.entries(body.messages).flatMap(([user, devices]) =>
     Object.entries(devices as Record<string, {algorithm?: string; ciphertext?: object}>)
       .map(([device, event]) => ({ user, device, event })));
@@ -81,5 +83,5 @@ export function assertTargets(body: unknown, expected: DeviceIdentity[]): void {
     const identity = expected.find(item => item.user === user && item.device === device);
     return !identity || event?.algorithm !== 'm.olm.v1.curve25519-aes-sha2' ||
       Object.keys(event.ciphertext ?? {}).join() !== identity.curve;
-  })) throw new Error('Anahtar dağıtım hedefi doğrulanmış cihazla eşleşmiyor.');
+  })) throw new HeartwoodError('keyTargetMismatch');
 }

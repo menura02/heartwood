@@ -1,4 +1,5 @@
 import { Heartwood } from '../src/client.ts';
+import { HeartwoodError } from '../src/failures.ts';
 import { MatrixHttp, login, part, register } from '../src/matrix.ts';
 import { Profile } from '../src/profile.ts';
 
@@ -110,5 +111,7 @@ process.on('message', async (command: Command) => {
     return;
   }
   try { process.send?.({ok: true, value: await run(command)}); }
-  catch (error) { process.send?.({error: (error as Error).message}); }
+  catch (error) {
+    process.send?.({error: (error as Error).message, code: error instanceof HeartwoodError ? error.code : undefined});
+  }
 });

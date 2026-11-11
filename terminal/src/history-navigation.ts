@@ -1,3 +1,4 @@
+import { HeartwoodError } from './failures.ts';
 import type { ChatLine } from './chat-feed.ts';
 import type { HistoryPage } from './history.ts';
 
@@ -18,13 +19,13 @@ export class HistoryNavigator {
   async older(room: string): Promise<HistoryResult> {
     this.assertIdle(room);
     const state = this.rooms.get(room);
-    if (!state) throw new Error('Önce /gecmis !oda ile geçmişi aç.');
-    if (state.next === undefined) throw new Error('Daha eski olay yok.');
+    if (!state) throw new HeartwoodError('historyNotOpen');
+    if (state.next === undefined) throw new HeartwoodError('noOlderEvents');
     return this.load(room, state.page + 1, state.next);
   }
 
   private assertIdle(room: string): void {
-    if (this.pending.has(room)) throw new Error('Bu oda için geçmiş isteği bekliyor.');
+    if (this.pending.has(room)) throw new HeartwoodError('historyReadPending');
   }
 
   private async load(room: string, page: number, before?: string): Promise<HistoryResult> {

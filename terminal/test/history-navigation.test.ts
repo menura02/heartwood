@@ -12,7 +12,7 @@ test('rooms have separate cursors and latest resets only its room', async () => 
   assert.deepEqual(await nav.latest('a'), {lines: [], hasMore: true, page: 1});
   assert.equal((await nav.latest('b')).page, 1);
   assert.deepEqual(await nav.older('a'), {lines: [], hasMore: false, page: 2});
-  await assert.rejects(nav.older('a'), /Daha eski olay yok/);
+  await assert.rejects(nav.older('a'), {code: 'noOlderEvents'});
   assert.equal((await nav.latest('a')).page, 1);
   assert.equal((await nav.older('b')).page, 2);
   assert.deepEqual(calls, [['a', undefined], ['b', undefined], ['a', 'a1'], ['a', undefined], ['b', 'b1']]);
@@ -56,10 +56,10 @@ test('starting and overlapping reads are guarded and failure releases the lock',
     if (++calls === 1) return pending.promise;
     return {lines: []};
   });
-  await assert.rejects(nav.older('a'), /Önce \/gecmis !oda ile geçmişi aç/);
+  await assert.rejects(nav.older('a'), {code: 'historyNotOpen'});
   const reading = nav.latest('a');
-  await assert.rejects(nav.latest('a'), /bekliyor/);
-  await assert.rejects(nav.older('a'), /bekliyor/);
+  await assert.rejects(nav.latest('a'), {code: 'historyReadPending'});
+  await assert.rejects(nav.older('a'), {code: 'historyReadPending'});
   pending.reject(new Error('HTTP'));
   await assert.rejects(reading, /HTTP/);
   assert.equal((await nav.latest('a')).page, 1);

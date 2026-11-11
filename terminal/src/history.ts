@@ -1,3 +1,4 @@
+import { HeartwoodError } from './failures.ts';
 import { part } from './matrix.ts';
 import type { ChatLine } from './chat-feed.ts';
 
@@ -43,10 +44,10 @@ async function readPage(request: HistoryRequest, room: string, query: URLSearchP
   const response = await request(`rooms/${part(room)}/messages?${query}`);
   if (!isRecord(response) || !Array.isArray(response.chunk) || !isToken(response.start) ||
       (response.end !== undefined && !isToken(response.end)) || !response.chunk.every(isHistoryEvent)) {
-    throw new Error('Sunucu geçerli bir geçmiş sayfası döndürmedi.');
+    throw new HeartwoodError('invalidHistoryPage');
   }
   if (response.end !== undefined && response.end === query.get('from')) {
-    throw new Error('Geçmiş imleci ilerlemedi.');
+    throw new HeartwoodError('historyCursorStalled');
   }
   return {events: [...response.chunk], next: response.end};
 }

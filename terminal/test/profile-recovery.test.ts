@@ -29,7 +29,7 @@ test('an OS lock prevents concurrent open and permits recovery after process dea
       once(worker.stdout, 'data').then(([chunk]) => assert.match(String(chunk), /ready/)),
       exit.then(() => { throw new Error('Profile fixture stopped before acquiring its lock'); }),
     ]);
-    await assert.rejects(Profile.open('alice', origin, 'alice', root), /kullanımda/);
+    await assert.rejects(Profile.open('alice', origin, 'alice', root), {code: 'profileInUse'});
     worker.kill('SIGKILL');
     await exit;
     const recovered = await Profile.open('alice', origin, 'alice', root);
@@ -49,7 +49,7 @@ test('an unmarked legacy lock remains in place', async () => {
   try {
     const old = join(root, 'alice', 'in-use');
     await mkdir(old, {recursive: true});
-    await assert.rejects(Profile.open('alice', origin, 'alice', root), /eski veya belirsiz/);
+    await assert.rejects(Profile.open('alice', origin, 'alice', root), {code: 'profileLockUncertain'});
     await assert.rejects(mkdir(old), {code: 'EEXIST'});
   } finally { await rm(root, {recursive: true, force: true}); }
 });

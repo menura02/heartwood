@@ -10,7 +10,7 @@ test('device code accepts only plain hex or the displayed ASCII groups', () => {
   assert.equal(normalizeDeviceCode(plain), plain);
   for (const invalid of [grouped.replace(' ', '-'), grouped.replace(' ', '\t'),
     grouped.replace(' ', '  '), grouped.replace(' ', '\u00a0'), plain + ' ', plain.slice(1), plain.replace('a', 'g')]) {
-    assert.throws(() => normalizeDeviceCode(invalid), /biçimi/);
+    assert.throws(() => normalizeDeviceCode(invalid), {code: 'invalidDeviceCode'});
   }
 });
 import { assertRoom, assertTargets, assertTrusted, deviceCode, localUser, matrixOrigin, safeText } from '../src/policy.ts';

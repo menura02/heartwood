@@ -1,3 +1,4 @@
+import { HeartwoodError } from './failures.ts';
 import { randomUUID } from 'node:crypto';
 import { access } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -62,16 +63,16 @@ export class Heartwood {
   }
 
   static async open(http: MatrixHttp, profile: Profile, session: Login, passphrase: string): Promise<Heartwood> {
-    if (passphrase.length < 12) throw new Error('Depo parolası en az 12 karakter olmalı.');
+    if (passphrase.length < 12) throw new HeartwoodError('storePassphraseTooShort');
     const keyPath = join(profile.path, 'keys');
     if (profile.data.identity) {
       await access(join(keyPath, 'matrix-sdk-crypto.sqlite3')).catch(() => {
-        throw new Error('Bu profilin kripto deposu eksik. Aynı cihaz kimliği yeniden oluşturulamaz.');
+        throw new HeartwoodError('cryptoStoreMissing');
       });
     }
     const machine = await OlmMachine.initialize(new UserId(session.user_id), new DeviceId(session.device_id),
       keyPath, passphrase, StoreType.Sqlite).catch(() => {
-      throw new Error('Kripto deposu açılamadı. Parolayı ve profil dosyalarını kontrol edin.');
+      throw new HeartwoodError('cryptoStoreOpenFailed');
     });
     try {
       const client = new Heartwood(http, profile, machine, session);
@@ -93,7 +94,7 @@ export class Heartwood {
       [RequestType.KeysQuery]: 'keys/query',
       [RequestType.KeysClaim]: 'keys/claim',
     }[request.type as RequestType.KeysUpload | RequestType.KeysQuery | RequestType.KeysClaim];
-    if (!endpoint) throw new Error('Beklenmeyen Matrix anahtar isteği.');
+    if (!endpoint) throw new HeartwoodError('unexpectedKeyRequest');
     const response = await this.http.request<{device_keys?: Record<string, Record<string, DeviceKeys>>}>(
       'POST', endpoint, JSON.parse(request.body));
     await this.machine.markRequestAsSent(request.id, request.type, JSON.stringify(response));
@@ -110,7 +111,7 @@ export class Heartwood {
     const previous = this.profile.data.sync;
     if (previous) query.set('since', previous.cursor);
     const response = await this.http.request<SyncResponse>('GET', 'sync?' + query);
-    if (!response.next_batch) throw new Error('Geçersiz eşzamanlama yanıtı.');
+    if (!response.next_batch) throw new HeartwoodError('invalidSyncResponse');
     const users = (values: string[] = []) => values.map(value => new UserId(value));
     await this.machine.receiveSyncChanges(JSON.stringify(response.to_device?.events ?? []),
       new DeviceLists(users(response.device_lists?.changed), users(response.device_lists?.left)),
@@ -134,7 +135,7 @@ export class Heartwood {
 
   private activePeer(peer: string): string {
     localUser(peer, this.identity.user);
-    if (this.profile.data.blocked.includes(peer)) throw new Error('Bu kullanıcı engelli.');
+    if (this.profile.data.blocked.includes(peer)) throw new HeartwoodError('peerBlocked');
     return peer;
   }
 
@@ -171,11 +172,11 @@ export class Heartwood {
   async accept(room: string): Promise<void> {
     await this.sync();
     const peer = this.invites.get(room);
-    if (!peer) throw new Error('Doğrulanabilir Heartwood daveti bulunamadı.');
+    if (!peer) throw new HeartwoodError('inviteNotVerified');
     this.activePeer(peer);
     await this.http.request('POST', `join/${part(room)}`, {});
     try {
-      if (await this.roomPeer(room) !== peer) throw new Error('Davetin katılımcısı değişti.');
+      if (await this.roomPeer(room) !== peer) throw new HeartwoodError('invitePeerChanged');
     } catch (error) {
       await this.leave(room);
       throw error;
@@ -185,7 +186,7 @@ export class Heartwood {
 
   async reject(room: string): Promise<void> {
     await this.sync();
-    if (!this.invites.has(room)) throw new Error('Bekleyen davet bulunamadı.');
+    if (!this.invites.has(room)) throw new HeartwoodError('noPendingInvite');
     await this.leave(room);
   }
 
@@ -224,7 +225,7 @@ export class Heartwood {
   }
 
   private roomState(room: string): Promise<StateEvent[]> {
-    if (!room.startsWith('!')) throw new Error('Tam oda kimliği gerekli.');
+    if (!room.startsWith('!')) throw new HeartwoodError('roomIdRequired');
     return this.http.request('GET', `rooms/${part(room)}/state`);
   }
 
@@ -264,14 +265,14 @@ export class Heartwood {
     const devices: DeviceIdentity[] = [];
     for (const user of users) {
       const entries = Object.entries(response.device_keys?.[user] ?? {});
-      if (entries.length === 0) throw new Error('Hesap için doğrulanabilir bir cihaz bulunamadı.');
-      if (entries.length > 1) throw new Error('Birden çok cihaz bulundu. İşlem için hesap başına tek cihaz gerekli.');
+      if (entries.length === 0) throw new HeartwoodError('noVerifiableDevice');
+      if (entries.length > 1) throw new HeartwoodError('tooManyDevices');
       const [device, key] = entries[0];
       const ed = key.keys[`ed25519:${device}`];
       const curve = key.keys[`curve25519:${device}`];
       if (key.device_id !== device || key.user_id !== user ||
           ![ed, curve].every(value => typeof value === 'string' && /^[A-Za-z0-9+/]{43}$/.test(value))) {
-        throw new Error('Sunucu geçerli cihaz anahtarları döndürmedi.');
+        throw new HeartwoodError('invalidDeviceKeys');
       }
       devices.push({ user, device, ed, curve });
     }
@@ -284,13 +285,13 @@ export class Heartwood {
     const [actual] = await this.devices([peer]);
     const prior = this.profile.data.pins[peer];
     if (prior) assertTrusted(prior, actual);
-    if (deviceCode(actual) !== normalized) throw new Error('Cihaz kodu eşleşmedi.');
+    if (deviceCode(actual) !== normalized) throw new HeartwoodError('deviceCodeMismatch');
     await this.profile.save({pins: { ...this.profile.data.pins, [peer]: actual }});
   }
 
   private async share(request: ToDeviceRequest, devices: DeviceIdentity[]): Promise<void> {
     const body = JSON.parse(request.body) as unknown;
-    if (request.eventType !== 'm.room.encrypted') throw new Error('Şifrelenmemiş anahtar olayı engellendi.');
+    if (request.eventType !== 'm.room.encrypted') throw new HeartwoodError('unencryptedKeyEvent');
     assertTargets(body, devices);
     const response = await this.http.request('PUT',
       `sendToDevice/${part(request.eventType)}/${part(request.txnId)}`, body);
@@ -298,7 +299,7 @@ export class Heartwood {
   }
 
   async send(room: string, message: string, expectedPeer?: string): Promise<SendResult> {
-    if (!message.trim() || Buffer.byteLength(message, 'utf8') > 4000) throw new Error('Mesaj 1–4000 UTF-8 bayt olmalı.');
+    if (!message.trim() || Buffer.byteLength(message, 'utf8') > 4000) throw new HeartwoodError('invalidMessageSize');
     return this.sends.start(room, () => this.prepareSend(room, message, expectedPeer), prepared => this.submitSend(prepared));
   }
 
@@ -314,14 +315,14 @@ export class Heartwood {
     return this.sends.retry(room, async prepared => {
       const [, recipient] = await this.sendDevices(room, expectedPeer);
       assertTrusted(prepared.recipient, recipient);
-      if (this.http.token !== prepared.token) throw new Error('Gönderimin Matrix oturumu değişti.');
+      if (this.http.token !== prepared.token) throw new HeartwoodError('sendSessionChanged');
     }, prepared => this.submitSend(prepared));
   }
 
   private async sendDevices(room: string, expectedPeer?: string): Promise<[DeviceIdentity, DeviceIdentity]> {
     await this.sync();
     const peer = await this.roomPeer(room);
-    if (expectedPeer !== undefined && peer !== expectedPeer) throw new Error('Sohbetin karşı tarafı değişti.');
+    if (expectedPeer !== undefined && peer !== expectedPeer) throw new HeartwoodError('chatPeerChanged');
     const [own, recipient] = await this.devices([this.identity.user, peer]);
     assertTrusted(this.identity, own);
     assertTrusted(this.profile.data.pins[peer], recipient);
@@ -343,7 +344,7 @@ export class Heartwood {
     }
     const ciphertext = JSON.parse(await this.machine.encryptRoomEvent(roomId, 'm.room.message',
       JSON.stringify({ msgtype: 'm.text', body: message }))) as {algorithm?: string; ciphertext?: string};
-    if (ciphertext.algorithm !== megolm || !ciphertext.ciphertext) throw new Error('Şifreleme tamamlanmadı.');
+    if (ciphertext.algorithm !== megolm || !ciphertext.ciphertext) throw new HeartwoodError('encryptionFailed');
     return {path: `rooms/${part(room)}/send/m.room.encrypted/${randomUUID()}`,
       ciphertext: {...ciphertext, algorithm: megolm, ciphertext: ciphertext.ciphertext},
       recipient, token: this.http.token};
@@ -373,7 +374,7 @@ export class Heartwood {
   async openLive(room: string, expectedPeer?: string) {
     const anchor = await this.sync();
     const peer = await this.roomPeer(room);
-    if (expectedPeer !== undefined && peer !== expectedPeer) throw new Error('Sohbetin karşı tarafı değişti.');
+    if (expectedPeer !== undefined && peer !== expectedPeer) throw new HeartwoodError('chatPeerChanged');
     const request = (path: string) => this.http.request('GET', path);
     const timeline = new LiveTimeline(anchor);
     const {events} = await readHistoryPage(request, room, anchor);
@@ -387,7 +388,7 @@ export class Heartwood {
       retry: () => this.retrySend(room, peer),
       refresh: () => timeline.poll(async from => {
         const until = await this.sync();
-        if (await this.roomPeer(room) !== peer) throw new Error('Sohbetin karşı tarafı değişti.');
+        if (await this.roomPeer(room) !== peer) throw new HeartwoodError('chatPeerChanged');
         const page = await readForwardPage(request, room, from, until);
         catchingUp = page.next !== undefined && page.next !== until;
         return page;
