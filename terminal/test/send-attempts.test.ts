@@ -3,6 +3,23 @@ import test from 'node:test';
 import { SendAttempts } from '../src/send-attempts.ts';
 import { MatrixFailure } from '../src/matrix.ts';
 
+test('pending sends expose room metadata and discard is bound to an idle record', async () => {
+  const attempts = new SendAttempts<string>();
+  const fail = async () => { throw new Error('response lost'); };
+  await attempts.start('room', async () => 'ciphertext', fail);
+  assert.deepEqual(attempts.pendingRooms(), ['room']);
+  const confirm = attempts.prepareDiscard('room');
+  const blocked = Promise.withResolvers<void>();
+  const retry = attempts.retry('room', () => blocked.promise, async () => '$accepted');
+  assert.throws(confirm, /sürüyor/);
+  blocked.resolve();
+  await retry;
+  await attempts.start('room', async () => 'new ciphertext', fail);
+  assert.throws(confirm, /değişti/);
+  attempts.prepareDiscard('room')();
+  assert.deepEqual(attempts.pendingRooms(), []);
+});
+
 test('an ambiguous send retries the identical ciphertext and checks permission again', async () => {
   const attempts = new SendAttempts<string>();
   const prepared = JSON.stringify({ciphertext: 'fixture'});

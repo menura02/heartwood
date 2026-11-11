@@ -6,6 +6,21 @@ type Submit<T> = (prepared: T) => Promise<string>;
 export class SendAttempts<T> {
   private readonly rooms = new Map<string, {busy: boolean; prepared?: T}>();
 
+  pendingRooms(): string[] {
+    return [...this.rooms].filter(([, slot]) => slot.prepared !== undefined).map(([room]) => room);
+  }
+
+  prepareDiscard(room: string): () => void {
+    const slot = this.rooms.get(room);
+    if (slot?.busy) throw new Error('Gönderim işlemi sürüyor.');
+    if (!slot || slot.prepared === undefined) throw new Error('Bekleyen gönderim yok.');
+    return () => {
+      if (this.rooms.get(room) !== slot) throw new Error('Bekleyen gönderim değişti.');
+      if (slot.busy) throw new Error('Gönderim işlemi sürüyor.');
+      this.rooms.delete(room);
+    };
+  }
+
   async start(room: string, prepare: () => Promise<T>, submit: Submit<T>): Promise<SendResult> {
     if (this.rooms.has(room)) throw new Error('Bu odada bekleyen gönderim var. /tekrar kullan.');
     if (this.rooms.size >= 32) throw new Error('Bekleyen gönderim sınırına ulaşıldı.');

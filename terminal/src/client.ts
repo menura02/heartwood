@@ -300,6 +300,14 @@ export class Heartwood {
     return this.sends.start(room, () => this.prepareSend(room, message, expectedPeer), prepared => this.submitSend(prepared));
   }
 
+  pendingSendRooms(): string[] {
+    return this.sends.pendingRooms();
+  }
+
+  prepareSendDiscard(room: string): () => void {
+    return this.sends.prepareDiscard(room);
+  }
+
   async retrySend(room: string, expectedPeer?: string): Promise<SendResult> {
     return this.sends.retry(room, async prepared => {
       const [, recipient] = await this.sendDevices(room, expectedPeer);

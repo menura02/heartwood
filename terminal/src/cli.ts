@@ -29,6 +29,8 @@ const help = `Kullanım: npm start -- <kayıt|giriş> <profil> <sunucu> <kullan�
 /durum !oda                   Megolm ve güncel cihaz doğrulaması
 /gonder !oda MESAJ            Şifreli metin gönder
 /tekrar !oda                  Sonucu belirsiz gönderimi tekrar dene
+/bekleyenler                  Sonucu belirsiz gönderimlerin odalarını listele
+/vazgec !oda                  Onayla ve yerel gönderim takibini bırak
 /gecmis !oda                  Son 50 olayı al ve doğrulanmış metni çöz
 /onceki !oda                  Daha eski sayfayı aç. Canlı sohbetten /geri ile dön.
 /cikis                        Profili kapat`;
@@ -46,6 +48,25 @@ async function sendWithStatus(action: () => Promise<SendResult>, retry = false):
   const result = await action();
   console.log(result.status === 'accepted' ? 'Şifreli olay sunucu tarafından kabul edildi.' :
     'Gönderim sonucu belirsiz. Aynı gönderimi /tekrar ile dene.');
+}
+
+function showPending(client: Heartwood): void {
+  const rooms = client.pendingSendRooms();
+  if (rooms.length === 0) console.log('Sonucu belirsiz gönderim yok.');
+  for (const room of rooms) console.log(safeText(`${room} · sonuç belirsiz`));
+}
+
+async function discardPending(client: Heartwood, reader: Interface, room: string, signal: AbortSignal): Promise<void> {
+  const discard = client.prepareSendDiscard(room);
+  console.log('Mesaj ulaşmış olabilir. Vazgeçmek sunucudaki mesajı silmez.');
+  const answer = await reader.question('Yerel takibi bırakmak için evet yaz: ', {signal});
+  if (answer.trim().toLowerCase() !== 'evet') {
+    console.log('Bekleyen gönderim korunuyor.');
+    return;
+  }
+  signal.throwIfAborted();
+  discard();
+  console.log('Yerel gönderim takibi bırakıldı.');
 }
 
 async function liveChat(client: Heartwood, reader: Interface, room: string, signal: AbortSignal,
@@ -120,6 +141,8 @@ async function liveChat(client: Heartwood, reader: Interface, room: string, sign
         await pending;
         if (signal.aborted) return true;
         if (message === '/tekrar') await sendWithStatus(live.retry, true);
+        else if (message === '/bekleyenler') showPending(client);
+        else if (message === '/vazgec') await discardPending(client, reader, room, signal);
         else await sendWithStatus(() => live.send(message));
       } catch (error) { report(error); }
       finally { sending = false; schedule(); }
@@ -208,6 +231,8 @@ async function shell(client: Heartwood, closed: AbortController): Promise<void> 
             break;
           }
           case '/tekrar': await sendWithStatus(() => client.retrySend(target), true); break;
+          case '/bekleyenler': showPending(client); break;
+          case '/vazgec': await discardPending(client, reader, target, closed.signal); break;
           case '/gecmis':
           case '/onceki': {
             const result = await (command === '/gecmis' ? history.latest(target) : history.older(target));
@@ -224,7 +249,11 @@ async function shell(client: Heartwood, closed: AbortController): Promise<void> 
         }
       } catch (error) { report(error); }
     }
-  } finally { reader.close(); }
+  } finally {
+    const count = client.pendingSendRooms().length;
+    if (count > 0) console.log(`${count} gönderimin sonucu belirsiz. Çıkışta yerel takip sona eriyor.`);
+    reader.close();
+  }
 }
 
 async function main(): Promise<void> {
