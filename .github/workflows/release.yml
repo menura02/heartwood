@@ -1,0 +1,106 @@
+name: Heartwood draft release
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: terminal-release-${{ github.ref }}
+  queue: max
+
+jobs:
+  validate:
+    name: Validate tag and main ancestry
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      commit: ${{ steps.tag.outputs.commit }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          ref: ${{ github.sha }}
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: '3.13'
+      - id: tag
+        run: |
+          commit=$(git rev-parse --verify "$GITHUB_SHA^{commit}")
+          python -B terminal/ci/release.py validate "$GITHUB_REF_NAME" "$commit"
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+
+  checks:
+    name: Tagged commit checks
+    needs: validate
+    uses: ./.github/workflows/terminal.yml
+    with:
+      commit: ${{ needs.validate.outputs.commit }}
+
+  package:
+    name: Package tested sources
+    needs: [validate, checks]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+          ref: ${{ needs.validate.outputs.commit }}
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: '3.13'
+      - run: python -B terminal/ci/release.py package "$GITHUB_REF_NAME" "$RUNNER_TEMP/heartwood-release"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: heartwood-release
+          path: |
+            ${{ runner.temp }}/heartwood-release/heartwood-terminal.zip
+            ${{ runner.temp }}/heartwood-release/SHA256SUMS
+            ${{ runner.temp }}/heartwood-release/release-notes.md
+          if-no-files-found: error
+          retention-days: 7
+          overwrite: true
+
+  draft:
+    name: Create new draft release
+    needs: [validate, package]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: heartwood-release
+          path: ${{ runner.temp }}/heartwood-release
+      - name: Verify package and create draft
+        shell: bash
+        working-directory: ${{ runner.temp }}/heartwood-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TESTED_COMMIT: ${{ needs.validate.outputs.commit }}
+        run: |
+          expected=$(sha256sum heartwood-terminal.zip)
+          test "$(cat SHA256SUMS)" = "$expected"
+          test -s release-notes.md
+          encoded_tag=$(jq -rn --arg tag "$GITHUB_REF_NAME" '$tag|@uri')
+          object=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$encoded_tag" --jq .object)
+          for ((i=0; i<16; i++)); do
+            if [[ $(jq -r .type <<<"$object") != tag ]]; then break; fi
+            tag_sha=$(jq -r .sha <<<"$object")
+            object=$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$tag_sha" --jq .object)
+          done
+          test "$(jq -r .type <<<"$object")" = commit
+          test "$(jq -r .sha <<<"$object")" = "$TESTED_COMMIT"
+          existing=$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" |
+            jq -sr --arg tag "$GITHUB_REF_NAME" 'any(.[][]; .tag_name == $tag)')
+          if [[ "$existing" != false ]]; then
+            echo "::error::A release or draft already exists for this tag. Inspect it in GitHub before retrying."
+            exit 1
+          fi
+          gh release create "$GITHUB_REF_NAME" heartwood-terminal.zip SHA256SUMS \
+            --repo "$GITHUB_REPOSITORY" --verify-tag --draft \
+            --title "Heartwood $GITHUB_REF_NAME" --notes-file release-notes.md

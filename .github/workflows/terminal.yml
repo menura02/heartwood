@@ -60,6 +60,8 @@ jobs:
         with:
           python-version: '3.13'
       - run: npm ci
+      - name: Check release validation and packaging
+        run: python -B ci/test_release.py
       - name: Run against disposable Synapse
         run: |
           python -m venv "$RUNNER_TEMP/heartwood-synapse"
