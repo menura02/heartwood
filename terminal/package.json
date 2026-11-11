@@ -3,13 +3,13 @@
   "version": "0.2.0",
   "private": true,
   "type": "module",
-  "engines": {
-    "node": ">=24 <25"
-  },
+  "engines": { "node": ">=24 <25" },
   "scripts": {
-    "start": "node src/cli.ts"
+    "start": "node src/cli.ts",
+    "test": "node --test test/*.test.ts",
+    "typecheck": "tsc --noEmit",
+    "test:integration": "node --test integration/synapse.test.ts"
   },
-  "dependencies": {
-    "@matrix-org/matrix-sdk-crypto-nodejs": "0.6.6"
-  }
+  "dependencies": { "@matrix-org/matrix-sdk-crypto-nodejs": "0.6.6" },
+  "devDependencies": { "@types/node": "24.10.0", "typescript": "5.9.3" }
 }

@@ -1,0 +1,50 @@
+name: Heartwood terminal
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: terminal
+
+jobs:
+  unit:
+    name: Typecheck and unit tests on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      matrix:
+        os: [windows-2025, ubuntu-24.04]
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24.20.0
+      - run: npm ci
+      - run: node ci/verify.ts
+
+  synapse:
+    name: Synapse integration on Linux
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24.20.0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - run: npm ci
+      - name: Run against disposable Synapse
+        run: |
+          python -m venv "$RUNNER_TEMP/heartwood-synapse"
+          "$RUNNER_TEMP/heartwood-synapse/bin/python" -m pip install matrix-synapse==1.164.2
+          HEARTWOOD_SYNAPSE_PYTHON="$RUNNER_TEMP/heartwood-synapse/bin/python" node integration/run-local.ts
