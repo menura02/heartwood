@@ -51,7 +51,7 @@ export class MatrixHttp {
     if (response.status >= 300 && response.status < 400) throw new Error('Matrix yönlendirmesi reddedildi.');
     const value = await response.json().catch((error: unknown) => {
       for (const controller of parent) controller.throwIfAborted();
-      if ([502, 503, 504].includes(response.status)) throw new MatrixFailure(response.status, 'UNKNOWN');
+      if (response.status >= 400) throw new MatrixFailure(response.status, 'UNKNOWN');
       if (!(error instanceof SyntaxError)) throw new MatrixTransportFailure();
       throw new Error('Sunucu geçerli bir JSON yanıtı döndürmedi.');
     }) as T;

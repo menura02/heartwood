@@ -31,3 +31,12 @@ test('HTTP cancellation reaches the active fetch and is distinct from a network 
   await assert.rejects(pending, {name: 'AbortError'});
   assert.equal(shutdown.signal.aborted, false);
 });
+
+test('a truncated authorization response still pauses automatic reads', async t => {
+  t.mock.method(globalThis, 'fetch', async () => ({
+    status: 403,
+    async json() { throw new TypeError('truncated response'); },
+  }));
+  const http = new MatrixHttp('http://127.0.0.1:18008');
+  await assert.rejects(http.request('GET', 'sync'), {status: 403});
+});
