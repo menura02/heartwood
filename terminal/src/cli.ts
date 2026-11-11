@@ -11,6 +11,7 @@ import type { ChatLine } from './chat-feed.ts';
 import { HistoryNavigator } from './history-navigation.ts';
 import type { SendResult } from './send-attempts.ts';
 import { ConversationList } from './conversation-list.ts';
+import { LiveRecovery } from './connection.ts';
 
 const help = `Kullanım: npm start -- <kayıt|giriş> <profil> <sunucu> <kullanıcı>
 Örnek: npm start -- giriş alice http://127.0.0.1:8008 alice
@@ -51,13 +52,16 @@ async function liveChat(client: Heartwood, reader: Interface, room: string, sign
   expectedPeer?: string): Promise<boolean> {
   const live = await client.openLive(room, expectedPeer);
   if (signal.aborted) return true;
-  console.log('Sohbet açık. Mesajını yaz ve Enter’a bas. /tekrar, /geri veya /cikis kullanabilirsin.');
+  console.log('Bağlı. Sohbet açık. /tekrar, /yenile, /geri veya /cikis kullanabilirsin.');
   for (const line of live.initial) console.log(chatText(line));
 
   let waiting = false;
   let sending = false;
   let pending: Promise<void> | undefined;
-  let lastError: string | undefined;
+  const recovery = new LiveRecovery();
+  const polling = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let delay: number | undefined = 1500;
   function show(lines: string[]): void {
     if (!lines.length || signal.aborted) return;
     if (waiting) {
@@ -70,23 +74,32 @@ async function liveChat(client: Heartwood, reader: Interface, room: string, sign
 
   async function refresh(): Promise<void> {
     try {
-      const lines = (await live.refresh()).map(chatText);
-      if (lastError) lines.unshift('Sohbet güncellendi.');
-      lastError = undefined;
+      const lines = (await client.http.withSignal(polling.signal, live.refresh)).map(chatText);
+      const update = recovery.success(live.catchingUp);
+      delay = update.delay;
+      if (update.status) lines.unshift(update.status);
       show(lines);
     } catch (error) {
-      const message = safeText(error instanceof Error ? error.message : 'Beklenmeyen hata.');
-      if (message !== lastError) show([`Sohbet güncellenemedi. ${message}`]);
-      lastError = message;
+      if (polling.signal.aborted || signal.aborted) return;
+      const update = recovery.fail(error);
+      delay = update.delay;
+      if (update.status) show([update.status, safeText(error instanceof Error ? error.message : 'Beklenmeyen hata.')]);
     }
   }
 
-  const timer = setInterval(() => {
-    if (sending || pending || signal.aborted) return;
-    pending = refresh().finally(() => { pending = undefined; });
-  }, 1500);
+  function schedule(): void {
+    clearTimeout(timer);
+    if (sending || pending || signal.aborted || polling.signal.aborted || delay === undefined) return;
+    timer = setTimeout(() => {
+      pending = refresh().finally(() => {
+        pending = undefined;
+        schedule();
+      });
+    }, delay);
+  }
 
   try {
+    schedule();
     while (!signal.aborted) {
       waiting = true;
       const line = await reader.question('sohbet> ', {signal}).catch(() => '/cikis');
@@ -95,18 +108,26 @@ async function liveChat(client: Heartwood, reader: Interface, room: string, sign
       if (message === '/geri') return false;
       if (message === '/cikis') return true;
       if (!message) continue;
+      if (message === '/yenile') {
+        recovery.resume();
+        delay = 0;
+        schedule();
+        continue;
+      }
       sending = true;
+      clearTimeout(timer);
       try {
         await pending;
         if (signal.aborted) return true;
         if (message === '/tekrar') await sendWithStatus(live.retry, true);
         else await sendWithStatus(() => live.send(message));
       } catch (error) { report(error); }
-      finally { sending = false; }
+      finally { sending = false; schedule(); }
     }
     return true;
   } finally {
-    clearInterval(timer);
+    clearTimeout(timer);
+    polling.abort();
     await pending;
   }
 }
@@ -126,11 +147,10 @@ async function secret(prompt: string): Promise<string> {
   }
 }
 
-async function shell(client: Heartwood): Promise<void> {
+async function shell(client: Heartwood, closed: AbortController): Promise<void> {
   const history = new HistoryNavigator((room, before) => client.historyPage(room, before));
   const conversations = new ConversationList();
   const reader = createInterface({ input: stdin, output: stdout, terminal: true, historySize: 0 });
-  const closed = new AbortController();
   reader.once('close', () => closed.abort());
   reader.once('SIGINT', () => reader.close());
   try {
@@ -214,7 +234,8 @@ async function main(): Promise<void> {
     throw new Error('Geçersiz komut. --help ile kullanımı göster.');
   }
   if (!stdin.isTTY || !stdout.isTTY) throw new Error('Gizli bilgi girişi için etkileşimli terminal gerekli.');
-  const http = new MatrixHttp(server);
+  const closed = new AbortController();
+  const http = new MatrixHttp(server, closed.signal);
   const profile = await Profile.open(name, http.origin, username);
   let client: Heartwood | undefined;
   try {
@@ -228,7 +249,7 @@ async function main(): Promise<void> {
       throw new Error('Depo parolaları eşleşmedi.');
     }
     client = await Heartwood.open(http, profile, await login(http, username, password, profile.data.device), passphrase);
-    await shell(client);
+    await shell(client, closed);
   } finally {
     client?.close();
     await profile.close();

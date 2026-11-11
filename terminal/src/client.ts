@@ -369,14 +369,18 @@ export class Heartwood {
     const {events} = await readHistoryPage(request, room, anchor);
     const decode = (event: HistoryEvent) => this.decode(room, peer, event);
     const initial = await timeline.initial(events, decode);
+    let catchingUp = false;
     return {
       initial,
+      get catchingUp() { return catchingUp; },
       send: (message: string) => this.send(room, message, peer),
       retry: () => this.retrySend(room, peer),
       refresh: () => timeline.poll(async from => {
         const until = await this.sync();
         if (await this.roomPeer(room) !== peer) throw new Error('Sohbetin karşı tarafı değişti.');
-        return readForwardPage(request, room, from, until);
+        const page = await readForwardPage(request, room, from, until);
+        catchingUp = page.next !== undefined && page.next !== until;
+        return page;
       }, decode),
     };
   }

@@ -1,6 +1,11 @@
 import { matrixOrigin } from './policy.ts';
+import { AsyncLocalStorage } from 'node:async_hooks';
 
 export const part = encodeURIComponent;
+
+export class MatrixTransportFailure extends Error {
+  constructor() { super('Sunucu bağlantısı kurulamadı veya istek zaman aşımına uğradı.'); }
+}
 
 export class MatrixFailure extends Error {
   readonly status: number;
@@ -15,23 +20,39 @@ export class MatrixFailure extends Error {
 export class MatrixHttp {
   readonly origin: string;
   token?: string;
+  private readonly shutdown?: AbortSignal;
+  private readonly scope = new AsyncLocalStorage<AbortSignal>();
 
-  constructor(origin: string) { this.origin = matrixOrigin(origin); }
+  constructor(origin: string, shutdown?: AbortSignal) {
+    this.origin = matrixOrigin(origin);
+    this.shutdown = shutdown;
+  }
+
+  withSignal<T>(signal: AbortSignal, action: () => Promise<T>): Promise<T> {
+    return this.scope.run(signal, action);
+  }
 
   async json<T>(method: string, path: string, body?: unknown): Promise<{status: number; value: T}> {
     const headers = new Headers({ Accept: 'application/json' });
     if (this.token) headers.set('Authorization', `Bearer ${this.token}`);
     if (body !== undefined) headers.set('Content-Type', 'application/json');
+    const parent = [this.shutdown, this.scope.getStore()].filter((signal): signal is AbortSignal => !!signal);
+    const signal = AbortSignal.any([...parent, AbortSignal.timeout(15_000)]);
+    const payload = body === undefined ? undefined : JSON.stringify(body);
     let response: Response;
     try {
       response = await fetch(`${this.origin}/_matrix/client/v3/${path}`, {
-        method, headers, redirect: 'error', signal: AbortSignal.timeout(15_000),
-        body: body === undefined ? undefined : JSON.stringify(body),
+        method, headers, redirect: 'manual', signal, body: payload,
       });
     } catch {
-      throw new Error('Sunucu bağlantısı kurulamadı veya istek zaman aşımına uğradı.');
+      for (const controller of parent) controller.throwIfAborted();
+      throw new MatrixTransportFailure();
     }
-    const value = await response.json().catch(() => {
+    if (response.status >= 300 && response.status < 400) throw new Error('Matrix yönlendirmesi reddedildi.');
+    const value = await response.json().catch((error: unknown) => {
+      for (const controller of parent) controller.throwIfAborted();
+      if ([502, 503, 504].includes(response.status)) throw new MatrixFailure(response.status, 'UNKNOWN');
+      if (!(error instanceof SyntaxError)) throw new MatrixTransportFailure();
       throw new Error('Sunucu geçerli bir JSON yanıtı döndürmedi.');
     }) as T;
     return {status: response.status, value};
