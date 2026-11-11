@@ -56,7 +56,8 @@ class ReleaseTest(unittest.TestCase):
 
     def test_package_has_exact_files_notes_and_checksum(self):
         excluded = (".git/config", "terminal/.lab/token", "terminal/.heartwood/profile",
-                    "terminal/node_modules/x", "docs/pilot/old")
+                    "terminal/node_modules/x", "docs/pilot/old",
+                    "docs/portfolio/distribution.md", "docs/archive/2026-11-11-ci-cd-handoff.tr.md")
         for name in excluded:
             path = self.root / name
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -66,6 +67,8 @@ class ReleaseTest(unittest.TestCase):
         archive = output / "heartwood-terminal.zip"
         with ZipFile(archive) as package:
             self.assertEqual(sorted(package.namelist()), sorted(PACKAGE_FILES))
+            self.assertTrue({"README.md", "README.tr.md", "ARCHITECTURE.md", "ARCHITECTURE.tr.md",
+                             "SECURITY.md", "SECURITY.tr.md"}.issubset(package.namelist()))
             self.assertTrue(set(excluded).isdisjoint(package.namelist()))
             self.assertIsNone(package.testzip())
         self.assertEqual((output / "SHA256SUMS").read_text().split(),

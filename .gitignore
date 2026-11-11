@@ -1,0 +1,30 @@
+# Local working documents retained after the repository cleanup.
+# List exact paths so future project documentation can still be tracked.
+/docs/archive/2026-11-11-ci-cd-handoff.tr.md
+/docs/archive/README.md
+/docs/archive/README.tr.md
+/docs/portfolio/ci-cd-guide.md
+/docs/portfolio/ci-cd-guide.tr.md
+/docs/portfolio/distribution.md
+/docs/portfolio/distribution.tr.md
+/docs/portfolio/reliability-design.md
+/docs/portfolio/reliability-design.tr.md
+/docs/portfolio/technical-design.md
+/docs/portfolio/technical-design.tr.md
+/docs/portfolio/terminal-ci.yml
+/docs/portfolio/terminal-guide.md
+/docs/portfolio/terminal-guide.tr.md
+/docs/superpowers/plans/2026-11-11-ci-cd-pipeline.md
+
+# Existing personal drafts and historical outputs.
+/docs/Heartwood_Dokumantasyon_Taslaklari_v0_1.zip
+/docs/portfolio/history-pagination-design.md
+/docs/portfolio/implementation-handoff.md
+/docs/portfolio/implementation-plan.md
+/docs/portfolio/project-scope.md
+/docs/portfolio/terminal-operability-design.md
+/docs/superpowers/plans/2026-11-10-pilot-discovery.md
+/docs/superpowers/plans/2026-11-10-terminal-history-pagination.md
+/docs/superpowers/plans/2026-11-11-terminal-reliability.md
+/docs/superpowers/plans/terminal-operability.md
+/docs/superpowers/specs/2026-11-10-paid-pilot-design.md

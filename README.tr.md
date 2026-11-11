@@ -2,28 +2,59 @@
 
 # Heartwood
 
-Heartwood, aynı Matrix sunucusundaki iki kişi arasında şifreli metin sohbeti sağlayan, gizlilik odaklı bir TypeScript terminal istemcisidir. Portföy projesi cihaz doğrulaması, canlı sohbet, mesaj geçmişi, yerel Synapse laboratuvarı ve tekrarlanabilir testleri içerir.
+Aynı Matrix sunucusundaki iki kişi için gizlilik odaklı, şifreli metin sohbeti sunan TypeScript terminal istemcisi. Heartwood cihaz doğrulaması ve yerel Synapse laboratuvarı içerir.
 
-Yeni bir çalışma kopyasında istemciyi kurmak ve Türkçe yardımı açmak için Node.js 24.20.0 kullan.
+## Kurulum
+
+Windows veya Linux’ta Node.js 24.20.0 kullan. Depo kopyasının veya ZIP’ten çıkardığın kaynak paketin kökünde çalıştır:
 
 ```sh
 cd terminal
 npm ci
+npm start -- --help
 npm start -- --lang tr --help
 ```
 
-Terminal arayüzü varsayılan olarak İngilizcedir. Sonraki çalıştırmalarda Türkçeyi varsayılan yapmak için `HEARTWOOD_LANG=tr` ayarla. `--lang en|tr` seçeneği ortam değişkeninden önceliklidir. Arayüz dili ne olursa olsun her iki dilin komutları çalışır. [Kurulum ve yerel Synapse gösterimi](docs/portfolio/terminal-guide.tr.md)
+PowerShell betiği engelleniyorsa `npm.cmd` kullan. Kurulum platformuna uygun Matrix bağlayıcısını indirir. Kurulumdan sonra yerel sohbet çevrimdışı çalışabilir. Varsayılan dil İngilizcedir. `--lang en|tr`, `en` veya `tr` alan `HEARTWOOD_LANG` ortam değişkeninden önceliklidir. Mevcut Türkçe komutlar iki dilde de çalışır. [Bağlayıcı ve desteklenen platformlar](https://github.com/matrix-org/matrix-rust-sdk-crypto-nodejs#usage)
 
-## İstemci kullanımı
+## Yerel laboratuvarı dene
 
-- `/sohbetler` karşı tarafı ve cihaz güven durumunu listeler. `/sohbet 1` ile numaralı sohbeti aç. Canlı sohbet bağlantı geri geldiğinde eksik olayları tamamlar. Sonucu belirsiz gönderimi aynı şifreli işlemle yeniden denemek için `/tekrar` kullan. [Güvenilirlik tasarımı](docs/portfolio/reliability-design.tr.md)
-- `/gecmis !ODA` ana komut ekranında en fazla 50 Matrix olayı içeren son sayfayı okur. `/onceki !ODA` aynı odada daha eski sayfaya geçer. [Geçmiş komutları](docs/portfolio/terminal-guide.tr.md#eski-mesajları-oku)
-- `/bekleyenler` belirsiz gönderimleri olan odaları listeler. `/vazgec` onayla yerel takibi bırakır. `/kimlik` hesap, cihaz ve gruplu tam doğrulama kodunu gösterir. [Teknik tasarım](docs/portfolio/technical-design.tr.md)
+Linux veya Ubuntu WSL’de Synapse’i ayrı bir Python ortamına kur. Python 3.13 veya üstü, `venv` ve `curl` kullan. Bu kurulum `ensurepip` gerektirmez.
 
-## Testler ve dağıtım
+```sh
+mkdir -p "$HOME/.local/share/heartwood"
+python3 -m venv --without-pip "$HOME/.local/share/heartwood/venv"
+curl -fsSL https://bootstrap.pypa.io/pip/pip.pyz -o "$HOME/.local/share/heartwood/pip.pyz"
+"$HOME/.local/share/heartwood/venv/bin/python" "$HOME/.local/share/heartwood/pip.pyz" install matrix-synapse==1.164.2
+```
 
-CI, Windows ve Linux'ta tip kontrolü ve birim testlerini çalıştırır. Ayrı bir Linux işi atılabilir Synapse ve gerçek PTY senaryolarını çalıştırır. [CI iş akışı](.github/workflows/terminal.yml)
+Linux’ta `terminal/` içindeyken `export HEARTWOOD_SYNAPSE_PYTHON="$HOME/.local/share/heartwood/venv/bin/python"` ayarla ve `node lab/run.ts --lang tr 18008` çalıştır. Windows’ta laboratuvarı `terminal/` içinden PowerShell ile başlat.
 
-Sürüm iş akışı aynı kontrolleri etiketlenen commit üzerinde çalıştırır. Başarılı koşu GitHub Release taslağı için kaynak ZIP'i, SHA-256 ve iki dilli sürüm notları hazırlar. [CI/CD ve yayın adımları](docs/portfolio/ci-cd-guide.tr.md) · [Kaynak paket kurulumu](docs/portfolio/distribution.tr.md) · [Değişiklik kaydı](CHANGELOG.tr.md)
+```powershell
+$linuxHome = (wsl -d Ubuntu --exec printenv HOME).Trim()
+$env:HEARTWOOD_SYNAPSE_PYTHON = "$linuxHome/.local/share/heartwood/venv/bin/python"
+node lab/run.ts --lang tr 18008
+```
 
-Gerçek hesap bilgilerini, anahtarları, kullanıcı profillerini ve özel mesajları depoya ekleme. [Katkı rehberi](CONTRIBUTING.tr.md) · [Belge arşivi](docs/archive/README.tr.md)
+Başka bir WSL dağıtımı kullanıyorsan adını komutta ve `HEARTWOOD_WSL_DISTRO` değişkeninde kullan. Laboratuvar penceresini açık tut. Yalnızca yerel geri döngü adresini dinleyen laboratuvar, 30 dakika ve üç kullanım için geçerli kayıt belirtecini gösterir. Ctrl+C laboratuvarı durdurur ve geçici sunucu ile hesap dosyalarını kaldırır.
+
+1. `terminal/` altındaki ayrı pencerelerde `npm start -- --lang tr register alice-demo http://127.0.0.1:18008 alice` ve `npm start -- --lang tr register bob-demo http://127.0.0.1:18008 bob` çalıştır. Her yeni laboratuvar için yeni profil adları seç, belirteci ve parolaları istendiğinde gir.
+2. Alice `/invite @bob:localhost` çalıştırır. Bob `/requests` ve ardından tam oda kimliğiyle `/accept !ROOM` çalıştırır.
+3. İki kullanıcı da `/identity` ile kodunu gösterir. Tam cihaz kodlarını güvenilir bir ikinci kanalda karşılaştır, ardından karşı tarafın kullanıcı kimliği ve koduyla `/verify @user:localhost CODE` çalıştır.
+4. `/conversations` ile sohbetleri listele, `/chat 1` ile listelenen sohbeti aç ve mesaj yaz. `/back` ana ekrana döner. `/exit` profili kapatır. Aynı laboratuvar çalışırken aynı profil ve hesapla `login` kullanarak geri dön.
+
+Ana ekranda `/history !ROOM` son sayfayı getirir. Devamı varsa `/older !ROOM` kullan. Canlı sohbette `/refresh` duraklatılan okumayı sürdürür. Belirsiz gönderimler için `/retry` ile tekrar dene veya `/pending` ile ilgili odaları listele. Ana ekranda `/retry !ROOM` kullan. `/discard`, `yes` veya `evet` onayıyla yerel takibi bırakır. Ana ekranda `/discard` komutuna oda kimliğini ekle.
+
+<a id="verify-zip"></a>
+
+## İndirilen ZIP’i doğrula
+
+`heartwood-terminal.zip` ve `SHA256SUMS` dosyalarının bulunduğu dizinde Linux veya WSL’de `sha256sum -c SHA256SUMS` çalıştır. PowerShell’de şu komutları kullan:
+
+```powershell
+$actual = (Get-FileHash -LiteralPath heartwood-terminal.zip -Algorithm SHA256).Hash
+$expected = ((Get-Content -LiteralPath SHA256SUMS -Raw).Trim() -split '\s+')[0]
+if ($actual -ne $expected) { throw 'SHA-256 uyuşmuyor' }
+```
+
+ZIP’i yeni bir dizine aç ve [Kurulum](#kurulum) adımlarını izle. [Mimari](ARCHITECTURE.tr.md) · [Güvenlik ve sınırlar](SECURITY.tr.md) · [Değişiklik kaydı](CHANGELOG.tr.md)

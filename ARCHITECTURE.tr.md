@@ -1,0 +1,13 @@
+[English](ARCHITECTURE.md) | [Türkçe](ARCHITECTURE.tr.md)
+
+# Mimari
+
+TypeScript terminal istemcisi kimlik doğrulama, davet, eşzamanlama, geçmiş ve şifreli olaylar için Matrix istemci API’sini kullanır. Matrix Rust SDK Node bağlayıcısı Olm/Megolm sağlar ve anahtarları parola korumalı SQLite’ta saklar. Geçici Synapse laboratuvarı sunucuyu çalıştırır ve olayları saklar. Önceki WASM SDK değerlendirmesi, test edilen Node ortamında bulunmayan kalıcı IndexedDB gerektiriyordu.
+
+- Her profil bir sunucuya, kullanıcıya ve cihaza bağlıdır. Profil eşzamanlama imlecini ve bekleyen davet kimliklerini kaydetmeden önce SDK anahtarları kaydeder. Profil yazımları atomiktir. Yerel depolamada işletim sistemi kilidini SQLite sağlar. İşaretli ve eski bir kilidi devralmak için bu kilidi almak gerekir. Belirsiz veya işaretsiz eski `in-use` dizini başlatmayı durdurur. Boş olduğu doğrulanmış eski dizini kaldırmadan önce tüm istemcilerin durduğunu doğrula.
+- Canlı sohbet, geçmişi ve ileri okumayı aynı Matrix sınırından açar. Her yenileme eşzamanlama ve en fazla bir ileri sayfa işler. Ana ekrandaki geçmiş en fazla 50 Matrix olayı okur ve oda başına ayrı imleç tutar. Geçerli devam imleci olan boş sayfa ilerleyebilir. Başarısız okuma veya ilerlemeyen imleç önceki konumu korur.
+- Aynı oda ve karşı taraf ardışık listelerde kaldığı sürece sohbet numarası değişmez. Listeden çıkan numara oturum içinde yeniden kullanılmaz. Sohbet açarken ve gönderirken seçili oda ile karşı taraf yeniden kontrol edilir.
+- Canlı sohbet son 512 olay kimliğini, 64 ileri imleci ve çözülmeyi bekleyen en fazla 50 şifreli olayı tutar. Bağlantı ve HTTP 502–504 hataları en fazla beş otomatik okuma denemesi alır. Yetki ve protokol hataları okumayı duraklatır. Çıkış canlı okumayı iptal eder ve geçici geçmiş ile yeniden deneme durumunu temizler.
+- Sonucu belirsiz gönderimin işlem yolu, şifreli yükü ve alıcı kimliği bellekte kalır. Oda başına bir ve toplamda en fazla 32 odada gönderim bekleyebilir. Tekrar aynı oturumda özgün işlemi kullanır ve oda üyeliğini, engellemeyi ve cihaz kimliğini yeniden kontrol eder. Olay kimliği sunucunun kabulünü doğrular. Vazgeçme yerel takibi kaldırır ve sunucudaki olay kalır. [Matrix işlem kimlikleri](https://spec.matrix.org/latest/client-server-api/#transaction-identifiers)
+
+[Kurulum ve kullanım](README.tr.md) · [Güvenlik ve sınırlar](SECURITY.tr.md)
