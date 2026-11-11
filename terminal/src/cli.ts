@@ -5,7 +5,7 @@ import { stdin, stdout } from 'node:process';
 import { Writable } from 'node:stream';
 import { Heartwood } from './client.ts';
 import { MatrixHttp, login, register } from './matrix.ts';
-import { deviceCode, safeText } from './policy.ts';
+import { deviceCode, formatDeviceCode, safeText } from './policy.ts';
 import { Profile } from './profile.ts';
 import type { ChatLine } from './chat-feed.ts';
 import { HistoryNavigator } from './history-navigation.ts';
@@ -180,12 +180,15 @@ async function shell(client: Heartwood, closed: AbortController): Promise<void> 
     console.log(`Oturum açık: ${safeText(client.identity.user)}. Komutlar için /yardim.`);
     while (true) {
       const line = await reader.question('heartwood> ', {signal: closed.signal}).catch(() => '/cikis');
-      const [command, target = '', ...argument] = line.trim().split(/\s+/);
-      const value = argument.join(' ');
+      const [command, target = ''] = line.trim().split(/\s+/);
       try {
         switch (command) {
           case '/yardim': console.log(help); break;
-          case '/kimlik': console.log(deviceCode(client.identity)); break;
+          case '/kimlik':
+            console.log(safeText(`Hesap ${client.identity.user} · cihaz ${client.identity.device}`));
+            console.log(formatDeviceCode(deviceCode(client.identity)));
+            console.log('Tam kodu güvenilir bir ikinci kanaldan karşılaştır.');
+            break;
           case '/davet': console.log(safeText(await client.invite(target))); break;
           case '/istekler':
             for (const {room, peer} of await client.pending()) console.log(safeText(`${room}  ${peer}`));
@@ -193,7 +196,12 @@ async function shell(client: Heartwood, closed: AbortController): Promise<void> 
           case '/kabul': await client.accept(target); console.log('İstek kabul edildi.'); break;
           case '/ret': await client.reject(target); console.log('İstek reddedildi.'); break;
           case '/engelle': await client.block(target); console.log('Kullanıcı engellendi.'); break;
-          case '/dogrula': await client.verify(target, value); console.log('Cihaz kodu doğrulandı.'); break;
+          case '/dogrula': {
+            const code = /^\s*\/dogrula[ \t]+\S+[ \t]+([^\r\n]*)$/u.exec(line)?.[1] ?? '';
+            await client.verify(target, code);
+            console.log('Cihaz kodu doğrulandı.');
+            break;
+          }
           case '/odalar':
             for (const room of await client.rooms()) console.log(safeText(room));
             break;

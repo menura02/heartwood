@@ -30,10 +30,21 @@ export function deviceCode(identity: DeviceIdentity): string {
   return createHash('sha256').update(JSON.stringify([identity.user, identity.device, identity.ed, identity.curve])).digest('hex');
 }
 
-export function assertTrusted(pin: DeviceIdentity | undefined, actual: DeviceIdentity): void {
-  if (!pin || deviceCode(pin) !== deviceCode(actual)) {
-    throw new Error('Cihaz doğrulanmadı veya değişti. Gönderim durduruldu.');
+export function normalizeDeviceCode(code: string): string {
+  if (code.length === 64 && /^[0-9a-f]{64}$/i.test(code)) return code.toLowerCase();
+  if (code.length === 71 && /^(?:[0-9a-f]{8} ){7}[0-9a-f]{8}$/i.test(code)) {
+    return code.replaceAll(' ', '').toLowerCase();
   }
+  throw new Error('Cihaz kodu biçimi geçersiz. Tam 64 onaltılık hane veya tek boşluklu sekiz grup gir.');
+}
+
+export function formatDeviceCode(code: string): string {
+  return normalizeDeviceCode(code).replace(/(.{8})(?=.)/g, '$1 ');
+}
+
+export function assertTrusted(pin: DeviceIdentity | undefined, actual: DeviceIdentity): void {
+  if (!pin) throw new Error('Karşı tarafın cihazı doğrulanmadı. /dogrula ile tam cihaz kodunu doğrula.');
+  if (deviceCode(pin) !== deviceCode(actual)) throw new Error('Doğrulanmış cihaz anahtarı değişti. İşlem durduruldu.');
 }
 
 export function assertRoomSettings(state: StateEvent[]): void {

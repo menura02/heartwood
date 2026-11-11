@@ -1,5 +1,18 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { formatDeviceCode, normalizeDeviceCode } from '../src/policy.ts';
+
+test('device code accepts only plain hex or the displayed ASCII groups', () => {
+  const plain = '012345ab'.repeat(8);
+  const grouped = '012345ab '.repeat(7) + '012345ab';
+  assert.equal(formatDeviceCode(plain), grouped);
+  assert.equal(normalizeDeviceCode(grouped.toUpperCase()), plain);
+  assert.equal(normalizeDeviceCode(plain), plain);
+  for (const invalid of [grouped.replace(' ', '-'), grouped.replace(' ', '\t'),
+    grouped.replace(' ', '  '), grouped.replace(' ', '\u00a0'), plain + ' ', plain.slice(1), plain.replace('a', 'g')]) {
+    assert.throws(() => normalizeDeviceCode(invalid), /biçimi/);
+  }
+});
 import { assertRoom, assertTargets, assertTrusted, deviceCode, localUser, matrixOrigin, safeText } from '../src/policy.ts';
 
 const alice = { user: '@alice:localhost', device: 'A', ed: 'a', curve: 'x' };

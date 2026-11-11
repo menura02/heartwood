@@ -180,7 +180,7 @@ test('Synapse: şifreli sohbet, çevrimdışı teslim, sayfalı geçmiş ve eri�
     assert.ok(!log.includes(lostMessage), 'retry fixture plaintext absent in selected server log');
   }
   await open('bob-extra', false, passphrase, 'bob');
-  await assert.rejects(rpc(alice.worker, 'send', {room, text: 'extra device'}), /tam bir cihaz/);
+  await assert.rejects(rpc(alice.worker, 'send', {room, text: 'extra device'}), /Birden çok cihaz/);
   await close('bob-extra');
   await rpc(bob.worker, 'block', {peer: alice.identity.user});
   assert.ok(!(await rpc<string[]>(bob.worker, 'rooms')).includes(room));

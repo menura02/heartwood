@@ -8,7 +8,7 @@ import {
 import type { ToDeviceRequest } from '@matrix-org/matrix-sdk-crypto-nodejs';
 import { MatrixFailure, MatrixHttp, part } from './matrix.ts';
 import type { Login } from './matrix.ts';
-import { assertRoom, assertRoomSettings, assertTargets, assertTrusted, deviceCode, localUser, megolm } from './policy.ts';
+import { assertRoom, assertRoomSettings, assertTargets, assertTrusted, deviceCode, localUser, megolm, normalizeDeviceCode } from './policy.ts';
 import type { DeviceIdentity, StateEvent } from './policy.ts';
 import { Profile } from './profile.ts';
 import type { ChatLine } from './chat-feed.ts';
@@ -264,7 +264,8 @@ export class Heartwood {
     const devices: DeviceIdentity[] = [];
     for (const user of users) {
       const entries = Object.entries(response.device_keys?.[user] ?? {});
-      if (entries.length !== 1) throw new Error('Her hesap için tam bir cihaz gerekli.');
+      if (entries.length === 0) throw new Error('Hesap için doğrulanabilir bir cihaz bulunamadı.');
+      if (entries.length > 1) throw new Error('Birden çok cihaz bulundu. İşlem için hesap başına tek cihaz gerekli.');
       const [device, key] = entries[0];
       const ed = key.keys[`ed25519:${device}`];
       const curve = key.keys[`curve25519:${device}`];
@@ -278,11 +279,12 @@ export class Heartwood {
   }
 
   async verify(peer: string, code: string): Promise<void> {
+    const normalized = normalizeDeviceCode(code);
     this.activePeer(peer);
     const [actual] = await this.devices([peer]);
-    if (deviceCode(actual) !== code.toLowerCase()) throw new Error('Cihaz kodu eşleşmedi.');
     const prior = this.profile.data.pins[peer];
     if (prior) assertTrusted(prior, actual);
+    if (deviceCode(actual) !== normalized) throw new Error('Cihaz kodu eşleşmedi.');
     await this.profile.save({pins: { ...this.profile.data.pins, [peer]: actual }});
   }
 
