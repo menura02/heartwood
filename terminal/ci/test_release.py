@@ -24,6 +24,9 @@ class ReleaseTest(unittest.TestCase):
         (self.root / "CHANGELOG.md").write_text(
             "# Changelog\n\n## 0.3.0\n\n- Test note\n\n## 0.2.0\n\n- Old note\n", encoding="utf-8",
         )
+        (self.root / "CHANGELOG.tr.md").write_text(
+            "# Değişiklik kaydı\n\n## 0.3.0\n\n- Test notu\n", encoding="utf-8",
+        )
 
     def write(self, name, data):
         (self.root / name).write_text(json.dumps(data), encoding="utf-8")
@@ -67,7 +70,8 @@ class ReleaseTest(unittest.TestCase):
             self.assertIsNone(package.testzip())
         self.assertEqual((output / "SHA256SUMS").read_text().split(),
                          [sha256(archive.read_bytes()).hexdigest(), archive.name])
-        self.assertEqual((output / "release-notes.md").read_text(encoding="utf-8"), "- Test note\n")
+        self.assertEqual((output / "release-notes.md").read_text(encoding="utf-8"),
+                         "## English\n\n- Test note\n\n## Türkçe\n\n- Test notu\n")
         with self.assertRaises(FileExistsError):
             build_package(self.root, "v0.3.0", output)
 
@@ -76,6 +80,10 @@ class ReleaseTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "CHANGELOG"):
             build_package(self.root, "v0.3.0", self.root / "out")
         (self.root / "CHANGELOG.md").write_text("## 0.3.0\nNotes", encoding="utf-8")
+        (self.root / "CHANGELOG.tr.md").write_text("## 0.2.0\nOld", encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "CHANGELOG.tr.md"):
+            build_package(self.root, "v0.3.0", self.root / "out")
+        (self.root / "CHANGELOG.tr.md").write_text("## 0.3.0\nNotlar", encoding="utf-8")
         (self.root / "terminal/src/cli.ts").unlink()
         with self.assertRaisesRegex(ValueError, "cli.ts"):
             build_package(self.root, "v0.3.0", self.root / "out")

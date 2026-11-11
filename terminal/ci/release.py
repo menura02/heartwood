@@ -9,8 +9,11 @@ from zipfile import ZIP_DEFLATED, ZipFile
 
 PACKAGE_FILES = (
     "CHANGELOG.md",
+    "CHANGELOG.tr.md",
     "docs/portfolio/distribution.md",
+    "docs/portfolio/distribution.tr.md",
     "docs/portfolio/technical-design.md",
+    "docs/portfolio/technical-design.tr.md",
     "terminal/package.json",
     "terminal/package-lock.json",
     "terminal/tsconfig.json",
@@ -22,17 +25,21 @@ PACKAGE_FILES = (
     "terminal/integration/terminal-pty.py",
     "terminal/lab/homeserver.yaml",
     "terminal/lab/log.yaml",
+    "terminal/lab/messages.ts",
     "terminal/lab/registration-token.ts",
     "terminal/lab/run.ts",
     "terminal/lab/supervise.py",
     "terminal/src/chat-feed.ts",
     "terminal/src/cli.ts",
     "terminal/src/client.ts",
+    "terminal/src/commands.ts",
     "terminal/src/connection.ts",
     "terminal/src/conversation-list.ts",
+    "terminal/src/failures.ts",
     "terminal/src/history-navigation.ts",
     "terminal/src/history.ts",
     "terminal/src/live-timeline.ts",
+    "terminal/src/locale.ts",
     "terminal/src/matrix.ts",
     "terminal/src/policy.ts",
     "terminal/src/profile-lock.ts",
@@ -44,7 +51,9 @@ PACKAGE_FILES = (
     "terminal/test/conversation-list.test.ts",
     "terminal/test/history-navigation.test.ts",
     "terminal/test/history.test.ts",
+    "terminal/test/lab.test.ts",
     "terminal/test/live-timeline.test.ts",
+    "terminal/test/locale.test.ts",
     "terminal/test/policy.test.ts",
     "terminal/test/profile-recovery.test.ts",
     "terminal/test/profile.test.ts",
@@ -98,14 +107,20 @@ def validate_tag(root, tag, expected_commit):
     git(root, "merge-base", "--is-ancestor", expected_commit, "refs/remotes/origin/main")
 
 
-def build_package(root, tag, output):
-    version = validate_version(root, tag)
-    changelog = package_file(root, "CHANGELOG.md").read_text(encoding="utf-8")
+def release_notes(root, path, version):
+    changelog = package_file(root, path).read_text(encoding="utf-8")
     sections = re.split(r"^## ", changelog, flags=re.MULTILINE)[1:]
     notes = [body.strip() for section in sections
              for heading, _, body in [section.partition("\n")] if heading.strip() == version]
     if len(notes) != 1 or not notes[0]:
-        raise ValueError("CHANGELOG must contain exactly one nonempty section for this version.")
+        raise ValueError(f"{path} must contain exactly one nonempty section for this version.")
+    return notes[0]
+
+
+def build_package(root, tag, output):
+    version = validate_version(root, tag)
+    english = release_notes(root, "CHANGELOG.md", version)
+    turkish = release_notes(root, "CHANGELOG.tr.md", version)
     files = [(name, package_file(root, name)) for name in PACKAGE_FILES]
     output.mkdir()
     archive = output / "heartwood-terminal.zip"
@@ -114,7 +129,9 @@ def build_package(root, tag, output):
             package.write(path, name)
     checksum = sha256(archive.read_bytes()).hexdigest()
     (output / "SHA256SUMS").write_bytes(f"{checksum}  {archive.name}\n".encode("ascii"))
-    (output / "release-notes.md").write_text(notes[0] + "\n", encoding="utf-8")
+    (output / "release-notes.md").write_text(
+        f"## English\n\n{english}\n\n## Türkçe\n\n{turkish}\n", encoding="utf-8",
+    )
 
 
 def main():
