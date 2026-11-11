@@ -48,3 +48,5 @@ jobs:
           python -m venv "$RUNNER_TEMP/heartwood-synapse"
           "$RUNNER_TEMP/heartwood-synapse/bin/python" -m pip install matrix-synapse==1.164.2
           HEARTWOOD_SYNAPSE_PYTHON="$RUNNER_TEMP/heartwood-synapse/bin/python" node integration/run-local.ts
+      - name: Run the real CLI in Linux PTYs
+        run: HEARTWOOD_SYNAPSE_PYTHON="$RUNNER_TEMP/heartwood-synapse/bin/python" node integration/run-pty.ts

@@ -1,6 +1,6 @@
 import { createInterface } from 'node:readline/promises';
 import type { Interface } from 'node:readline/promises';
-import { clearLine, cursorTo } from 'node:readline';
+import { clearScreenDown, cursorTo, moveCursor } from 'node:readline';
 import { stdin, stdout } from 'node:process';
 import { Writable } from 'node:stream';
 import { Heartwood } from './client.ts';
@@ -12,6 +12,7 @@ import { HistoryNavigator } from './history-navigation.ts';
 import type { SendResult } from './send-attempts.ts';
 import { ConversationList } from './conversation-list.ts';
 import { LiveRecovery } from './connection.ts';
+import { TerminalInput } from './terminal-input.ts';
 
 const help = `Kullanım: npm start -- <kayıt|giriş> <profil> <sunucu> <kullanıcı>
 Örnek: npm start -- giriş alice http://127.0.0.1:8008 alice
@@ -85,12 +86,18 @@ async function liveChat(client: Heartwood, reader: Interface, room: string, sign
   let delay: number | undefined = 1500;
   function show(lines: string[]): void {
     if (!lines.length || signal.aborted) return;
+    const rows = waiting ? reader.getCursorPos().rows : 0;
     if (waiting) {
+      moveCursor(stdout, 0, -rows);
       cursorTo(stdout, 0);
-      clearLine(stdout, 0);
+      clearScreenDown(stdout);
     }
     console.log(lines.join('\n'));
-    if (waiting) reader.prompt(true);
+    if (waiting) {
+      // Readline moves up from the draft's cursor row before redrawing it.
+      if (rows > 0) stdout.write('\n'.repeat(rows));
+      reader.prompt(true);
+    }
   }
 
   async function refresh(): Promise<void> {
@@ -155,25 +162,25 @@ async function liveChat(client: Heartwood, reader: Interface, room: string, sign
   }
 }
 
-async function secret(prompt: string): Promise<string> {
-  stdout.write(prompt);
+async function secret(input: TerminalInput, prompt: string, signal: AbortSignal): Promise<string> {
   const hidden = new Writable({ write(_chunk, _encoding, done) { done(); } });
-  const reader = createInterface({ input: stdin, output: hidden, terminal: true, historySize: 0 });
+  const reader = createInterface({ input, output: hidden, terminal: true, historySize: 0 });
   const closed = new AbortController();
   reader.once('close', () => closed.abort());
   reader.once('SIGINT', () => reader.close());
   try {
-    return await reader.question('', { signal: AbortSignal.any([closed.signal, AbortSignal.timeout(180_000)]) });
+    stdout.write(prompt);
+    return await reader.question('', { signal: AbortSignal.any([signal, closed.signal, AbortSignal.timeout(180_000)]) });
   } finally {
     reader.close();
     stdout.write('\n');
   }
 }
 
-async function shell(client: Heartwood, closed: AbortController): Promise<void> {
+async function shell(client: Heartwood, input: TerminalInput, closed: AbortController): Promise<void> {
   const history = new HistoryNavigator((room, before) => client.historyPage(room, before));
   const conversations = new ConversationList();
-  const reader = createInterface({ input: stdin, output: stdout, terminal: true, historySize: 0 });
+  const reader = createInterface({ input, output: stdout, terminal: true, historySize: 0 });
   reader.once('close', () => closed.abort());
   reader.once('SIGINT', () => reader.close());
   try {
@@ -273,23 +280,42 @@ async function main(): Promise<void> {
   if (!stdin.isTTY || !stdout.isTTY) throw new Error('Gizli bilgi girişi için etkileşimli terminal gerekli.');
   const closed = new AbortController();
   const http = new MatrixHttp(server, closed.signal);
-  const profile = await Profile.open(name, http.origin, username);
+  const interrupt = () => closed.abort();
+  const input = new TerminalInput(interrupt, () => stdout.write('\x07'));
+  const wasRaw = stdin.isRaw;
+  let bracketed = false;
+  let profile: Profile | undefined;
   let client: Heartwood | undefined;
+  process.on('SIGINT', interrupt);
   try {
-    const password = await secret('Hesap parolası: ');
+    profile = await Profile.open(name, http.origin, username);
+    closed.signal.throwIfAborted();
+    stdin.setRawMode(true);
+    stdin.pipe(input);
+    stdout.write('\x1b[?2004h');
+    bracketed = true;
+    const password = await secret(input, 'Hesap parolası: ', closed.signal);
     if (mode === 'kayıt' || mode === 'kayit') {
-      await register(http, username, password, await secret('Kayıt belirteci: '));
+      await register(http, username, password, await secret(input, 'Kayıt belirteci: ', closed.signal));
       console.log('Hesap oluşturuldu.');
     }
-    const passphrase = await secret('Yerel kripto deposu parolası: ');
-    if (!profile.data.identity && passphrase !== await secret('Depo parolasını tekrar girin: ')) {
+    const passphrase = await secret(input, 'Yerel kripto deposu parolası: ', closed.signal);
+    if (!profile.data.identity && passphrase !== await secret(input, 'Depo parolasını tekrar girin: ', closed.signal)) {
       throw new Error('Depo parolaları eşleşmedi.');
     }
     client = await Heartwood.open(http, profile, await login(http, username, password, profile.data.device), passphrase);
-    await shell(client, closed);
+    await shell(client, input, closed);
+  } catch (error) {
+    if (!closed.signal.aborted) throw error;
   } finally {
-    client?.close();
-    await profile.close();
+    stdin.unpipe(input);
+    input.destroy();
+    stdin.pause();
+    if (stdin.isRaw !== wasRaw) stdin.setRawMode(wasRaw);
+    if (bracketed) stdout.write('\x1b[?2004l');
+    process.off('SIGINT', interrupt);
+    try { client?.close(); }
+    finally { await profile?.close(); }
   }
 }
 
