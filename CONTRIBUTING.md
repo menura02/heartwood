@@ -14,7 +14,7 @@ English is the default in the terminal and documentation. Turkish is a fully sup
 
 1. Find the pair in [the documentation scope](terminal/ci/document-pairs.json). Use the default `.md` name for English and `.tr.md` for Turkish. Register new current pairs in that file.
 2. Put `[English](file.md) | [Türkçe](file.tr.md)` at the top of both files. Keep the technical details, safety boundaries, links, and working commands equivalent. Use actual help output for CLI examples in each language.
-3. Keep historical originals under the policy described in [the archive index](docs/archive/README.md). The scope file records the reasons for single-file bilingual content and exceptions for agent instructions, historical material, third-party files, licenses, and generated output.
+3. Keep personal drafts and historical working documents local. The scope file records the reasons for single-file bilingual content and exceptions for agent instructions, historical material, third-party files, licenses, and generated output.
 
 CI checks that required editions and their reciprocal links exist and validates relative Markdown links in the registered current documents. A pull request that changes one edition gets a review warning. Update the counterpart if the meaning changed. For a language-specific correction, explain why it applies to one edition in the pull request. CI cannot establish that the translations convey the same meaning, so review both editions.
 
@@ -31,4 +31,10 @@ npm start -- --help
 npm start -- --lang tr --help
 ```
 
-`ci/verify.ts` runs the type check and unit tests, including language selection, catalog keys, named placeholders, and nonempty translations. For changes to terminal interactions, follow [the terminal guide](docs/portfolio/terminal-guide.md) to run the Synapse and PTY checks where supported.
+`ci/verify.ts` runs the type check and unit tests, including the language checks. For changes to terminal interactions, follow the [lab setup](README.md#try-the-local-lab) to set `HEARTWOOD_SYNAPSE_PYTHON`. From `terminal/`, run `node integration/run-local.ts` on Linux or on Windows with WSL. Run `node integration/run-pty.ts` on Linux or WSL with Node and Python 3.13 or later. The runners start their own labs. Use `python -B ci/test_release.py` to test packaging.
+
+## Prepare a release
+
+1. Match the version in `terminal/package.json`, its lockfile, and both changelogs. Merge the PR after the Windows and Ubuntu checks and the Linux Synapse job pass. Confirm that CI passes on the resulting `main` commit. [CI workflow](.github/workflows/terminal.yml)
+2. Verify that the matching tag is unused both locally and remotely. Tag the tested commit and push that tag. The release workflow verifies the tag and commit, reruns CI, and prepares a draft with the source ZIP, checksum and bilingual release notes. It stops if a draft or release already exists for that tag. [Release workflow](.github/workflows/release.yml)
+3. Review the draft’s commit and notes. Download and [verify the ZIP](README.md#verify-a-downloaded-zip), then install from the extracted package before publishing in GitHub.

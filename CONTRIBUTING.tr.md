@@ -14,7 +14,7 @@ Terminalin ve belgelerin varsayılan dili İngilizcedir. Türkçe tam desteklene
 
 1. Eşleşmeyi [belge kapsamı listesinde](terminal/ci/document-pairs.json) bul. İngilizce için varsayılan `.md` adını, Türkçe için `.tr.md` adını kullan. Yeni güncel belge eşleşmelerini bu dosyaya ekle.
 2. Her iki dosyanın başına `[English](file.md) | [Türkçe](file.tr.md)` ekle. Teknik ayrıntıların, güvenlik sınırlarının, bağlantıların ve çalışan komutların iki dilde eşdeğer olmasını sağla. Komut satırı örneklerinde ilgili dildeki gerçek yardım çıktısını kullan.
-3. Geçmiş belgelerin özgün sürümlerini [arşiv dizinindeki](docs/archive/README.tr.md) kurala göre koru. Kapsam dosyasında tek dosyada iki dil kullanımının ve ajan talimatları, geçmiş belgeler, üçüncü taraf dosyaları, lisanslar ve üretilmiş çıktılar için tanınan istisnaların gerekçeleri yer alır.
+3. Kişisel taslakları ve geçmiş çalışma belgelerini yerelde tut. Kapsam dosyasında tek dosyada iki dil kullanımının ve ajan talimatları, geçmiş belgeler, üçüncü taraf dosyaları, lisanslar ve üretilmiş çıktılar için tanınan istisnaların gerekçeleri yer alır.
 
 CI gerekli belge sürümlerini, karşılıklı dil bağlantılarını ve kapsamdaki güncel belgelerin göreli Markdown bağlantılarını denetler. Bir çekme isteği belgenin tek sürümünü değiştirirse inceleme uyarısı çıkar. Anlam değiştiyse diğer sürümü de güncelle. Düzeltme tek bir dile özgüyse nedenini çekme isteğinde açıkla. CI, çevirilerin aynı anlamı taşıdığını kanıtlayamaz. İki sürümü de incele.
 
@@ -31,4 +31,10 @@ npm start -- --help
 npm start -- --lang tr --help
 ```
 
-`ci/verify.ts`, tip kontrolünü ve dil seçimi, katalog anahtarları, adlandırılmış yer tutucular ve boş olmayan çeviriler dahil birim testlerini çalıştırır. Terminal etkileşimlerini değiştirdiğinde desteklenen ortamlarda Synapse ve PTY kontrollerini çalıştırmak için [terminal kılavuzunu](docs/portfolio/terminal-guide.tr.md) izle.
+`ci/verify.ts`, tip kontrolünü ve dil kontrolleri dahil birim testlerini çalıştırır. Terminal etkileşimleri değiştiğinde `HEARTWOOD_SYNAPSE_PYTHON` değerini ayarlamak için [laboratuvar kurulumunu](README.tr.md#yerel-laboratuvarı-dene) izle. `terminal/` içinden Linux’ta veya WSL kullanan Windows’ta `node integration/run-local.ts` çalıştır. Node ve Python 3.13 veya üstüyle Linux veya WSL’de `node integration/run-pty.ts` çalıştır. Testler kendi laboratuvarlarını başlatır. Paketlemeyi `python -B ci/test_release.py` ile sına.
+
+## Sürüm hazırla
+
+1. `terminal/package.json`, kilit dosyası ve iki değişiklik kaydındaki sürümleri eşleştir. Windows ve Ubuntu kontrolleriyle Linux Synapse işi geçince PR’ı birleştir. Ortaya çıkan `main` commit’inde CI’ın geçtiğini doğrula. [CI iş akışı](.github/workflows/terminal.yml)
+2. Sürüme karşılık gelen etiketin yerelde ve uzakta boşta olduğunu doğrula. Test edilen commit’i etiketle ve etiketi gönder. Sürüm iş akışı etiketi ve commit’i doğrular, CI’ı yeniden çalıştırır ve kaynak ZIP’i, özet dosyası ve iki dilli notlarla bir taslak hazırlar. Aynı etiket için taslak veya sürüm varsa durur. [Sürüm iş akışı](.github/workflows/release.yml)
+3. Taslağın commit’ini ve notlarını incele. GitHub’da yayımlamadan önce [ZIP’i indirip doğrula](README.tr.md#verify-zip) ve açılan paketten kurulumu yap.
