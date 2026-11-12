@@ -43,6 +43,8 @@ interface PreparedSend {
   token: string | undefined;
 }
 
+export type OnboardingStep = 'accept' | 'wait' | 'verify' | 'changed' | 'ready' | 'invite' | 'unavailable';
+
 export class Heartwood {
   readonly identity: DeviceIdentity;
   readonly http: MatrixHttp;
@@ -239,10 +241,54 @@ export class Heartwood {
   }
 
   private async verifiedPeer(peer: string): Promise<boolean> {
+    return await this.peerTrust(peer) === 'verified';
+  }
+
+  private async peerTrust(peer: string): Promise<'unverified' | 'changed' | 'verified'> {
     const [own, recipient] = await this.devices([this.identity.user, peer]);
     assertTrusted(this.identity, own);
     const pin = this.profile.data.pins[peer];
-    return !!pin && deviceCode(pin) === deviceCode(recipient);
+    if (!pin) return 'unverified';
+    return deviceCode(pin) === deviceCode(recipient) ? 'verified' : 'changed';
+  }
+
+  async onboardingStep(): Promise<OnboardingStep> {
+    if ((await this.pending()).length) return 'accept';
+    let waiting = false;
+    let unavailable = false;
+    for (const room of await this.rooms()) {
+      const state = await this.roomState(room).catch(error => {
+        if (error instanceof MatrixFailure && [403, 404].includes(error.status) && error.code !== 'M_UNKNOWN_TOKEN') {
+          return undefined;
+        }
+        throw error;
+      });
+      if (!state) { unavailable = true; continue; }
+      let peer: string;
+      try {
+        peer = this.activePeer(assertRoom(state, this.identity.user));
+      } catch (error) {
+        if (!(error instanceof HeartwoodError)) throw error;
+        if (error.code === 'invalidRoomSettings' || error.code === 'peerBlocked') continue;
+        if (error.code === 'invalidRoomMembership') {
+          const active = state.filter(event => event.type === 'm.room.member' &&
+            ['join', 'invite', 'knock'].includes(String(event.content.membership)));
+          const invite = active.find(event => event.state_key !== this.identity.user);
+          if (active.length === 2 && invite?.sender === this.identity.user &&
+              invite.content.membership === 'invite' &&
+              active.some(event => event.state_key === this.identity.user && event.content.membership === 'join') &&
+              !this.profile.data.blocked.includes(invite.state_key)) {
+            waiting = true;
+            continue;
+          }
+        }
+        unavailable = true;
+        continue;
+      }
+      const trust = await this.peerTrust(peer);
+      return trust === 'verified' ? 'ready' : trust === 'changed' ? 'changed' : 'verify';
+    }
+    return waiting ? 'wait' : unavailable ? 'unavailable' : 'invite';
   }
 
   async conversations(): Promise<{rooms: Conversation[]; unavailable: number}> {

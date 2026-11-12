@@ -6,9 +6,12 @@ export type Language = 'en' | 'tr';
 const en = {
   help: `Usage: npm start -- [--lang en|tr] <register|login> <profile> <server> <username>
 Example: npm start -- login alice http://127.0.0.1:18008 alice
+Diagnostics: npm start -- doctor [server]
+Guided setup: npm start -- onboard
 Set HEARTWOOD_LANG to choose a default language.
 
 /help                              Show commands
+/guide                             Check the next setup step
 /identity                          Show your device code
 /invite @user:server               Invite someone to a private chat
 /requests                          List pending invitations
@@ -76,14 +79,53 @@ In chat, type a message to send it. Use /back to return or /refresh to resume li
   catchingUp: 'Catching up on chat history…',
   paused: 'Live reads paused. Use /refresh to try again.',
   reconnecting: 'Reconnecting…',
+  doctorResult: '{level} · {check} · {detail}',
+  doctorPass: 'PASS',
+  doctorWarn: 'WARN',
+  doctorFail: 'FAIL',
+  doctorNode: 'Node.js',
+  doctorCrypto: 'Matrix crypto',
+  doctorProfile: 'Profile directory',
+  doctorMatrix: 'Matrix API',
+  doctorNodeOk: 'Supported Node.js 24 runtime.',
+  doctorNodeBad: 'Use Node.js 24 and rerun doctor.',
+  doctorCryptoOk: 'The native Matrix binding loads.',
+  doctorCryptoBad: 'The binding did not load in time. Run npm ci on a supported platform.',
+  doctorProfileOk: 'The directory reports read, write and traversal access.',
+  doctorProfileMissing: 'No profile directory yet. The home directory reports the required access.',
+  doctorProfileBad: 'Check that the profile directory or its parent is accessible and writable by your account.',
+  doctorMatrixSkipped: 'Server omitted. Pass an address to check connectivity.',
+  doctorMatrixOrigin: 'Use an HTTPS server address or a loopback HTTP address.',
+  doctorMatrixOk: 'The unauthenticated Matrix versions endpoint responded.',
+  doctorMatrixBad: 'Check the server address, network, TLS certificate or local Synapse status.',
+  doctorScope: 'These checks cover setup and connectivity. Verify device codes separately.',
+  guideIntro: 'Heartwood guided setup. Press Ctrl+C to cancel.',
+  guideMode: 'Type register, login, or q to quit: ',
+  guideModeInvalid: 'Choose register or login.',
+  guideServer: 'Matrix server address (HTTPS or loopback HTTP): ',
+  guideProfile: 'Local profile name (lowercase letters, digits, underscores or hyphens): ',
+  guideUsername: 'Account username on this server: ',
+  guideAccept: 'An invitation is waiting. Use /requests, then /accept !room.',
+  guideWait: 'Chat is waiting for the other person to accept your invitation. Use /guide to check again or /exit to leave.',
+  guideVerify: 'Chat needs device verification. Use /identity, compare the full codes on a trusted second channel, then use /verify.',
+  guideChanged: 'The pinned device has changed. Sending to this device is blocked. Check with the other person on a trusted channel.',
+  guideReady: 'A chat has a verified device. Use /conversations and /chat to open it.',
+  guideInvite: 'Use /invite @user:server to start a chat, or /requests to check for incoming invitations.',
+  guideUnavailable: 'No eligible chat is available. Check the invitation and room membership with the other person.',
+  guideBlocked: 'Could not confirm chat readiness. Continue with commands or use /guide to try again.',
+  guideTimeout: 'The readiness check timed out. Check the connection with doctor.',
+  demoHelp: 'Usage: node lab/demo.ts [--lang en|tr]. Starts a disposable Synapse demo on Linux or WSL and prints selected terminal output.',
 } as const;
 
 const tr = {
   help: `Kullanım: npm start -- [--lang en|tr] <register|login> <profil> <sunucu> <kullanıcı>
 Örnek: npm start -- --lang tr login alice http://127.0.0.1:18008 alice
+Tanılama: npm start -- --lang tr doctor [sunucu]
+Yönlendirmeli kurulum: npm start -- --lang tr onboard
 Varsayılan dili seçmek için HEARTWOOD_LANG ayarla.
 
 /help                              Komutları göster
+/guide                             Sonraki kurulum adımını kontrol et
 /identity                          Kendi cihaz kodunu göster
 /invite @kullanıcı:sunucu          Özel sohbet isteği gönder
 /requests                          Bekleyen istekleri listele
@@ -151,6 +193,42 @@ Sohbette göndermek için mesaj yaz. /back ile dön veya /refresh ile canlı oku
   catchingUp: 'Geçmiş tamamlanıyor…',
   paused: 'Canlı okuma durdu. Tekrar denemek için /refresh kullan.',
   reconnecting: 'Yeniden bağlanıyor…',
+  doctorResult: '{level} · {check} · {detail}',
+  doctorPass: 'BAŞARILI',
+  doctorWarn: 'UYARI',
+  doctorFail: 'BAŞARISIZ',
+  doctorNode: 'Node.js',
+  doctorCrypto: 'Matrix kriptografisi',
+  doctorProfile: 'Profil dizini',
+  doctorMatrix: 'Matrix API',
+  doctorNodeOk: 'Desteklenen Node.js 24 çalışıyor.',
+  doctorNodeBad: 'Node.js 24 kullanıp doctor komutunu yeniden çalıştır.',
+  doctorCryptoOk: 'Yerel Matrix bağlayıcısı yüklenebiliyor.',
+  doctorCryptoBad: 'Bağlayıcı zamanında yüklenemedi. Desteklenen bir platformda npm ci çalıştır.',
+  doctorProfileOk: 'Dizin okuma, yazma ve erişim izni bildiriyor.',
+  doctorProfileMissing: 'Henüz profil dizini yok. Ana dizin gerekli erişimi bildiriyor.',
+  doctorProfileBad: 'Profil dizinine veya üst dizinine hesabınla erişip yazabildiğini kontrol et.',
+  doctorMatrixSkipped: 'Sunucu verilmedi. Bağlantıyı denetlemek için bir adres gir.',
+  doctorMatrixOrigin: 'HTTPS veya yerel geri döngü HTTP adresi kullan.',
+  doctorMatrixOk: 'Kimlik doğrulaması gerektirmeyen Matrix sürüm uç noktası yanıt verdi.',
+  doctorMatrixBad: 'Sunucu adresini, ağı, TLS sertifikasını veya yerel Synapse durumunu kontrol et.',
+  doctorScope: 'Bu denetimler kurulum ve bağlantıyı kapsar. Cihaz kodlarını ayrıca doğrula.',
+  guideIntro: 'Heartwood yönlendirmeli kurulum. İptal etmek için Ctrl+C’ye bas.',
+  guideMode: 'Kayıt için register, giriş için login, çıkmak için q yaz: ',
+  guideModeInvalid: 'register veya login seç.',
+  guideServer: 'Matrix sunucu adresi (HTTPS veya yerel geri döngü HTTP): ',
+  guideProfile: 'Yerel profil adı (küçük harf, rakam, alt çizgi veya kısa çizgi): ',
+  guideUsername: 'Bu sunucudaki hesap kullanıcı adı: ',
+  guideAccept: 'Bir davet bekliyor. /requests, ardından /accept !oda kullan.',
+  guideWait: 'Sohbet karşı tarafın daveti kabul etmesini bekliyor. Yeniden kontrol için /guide, çıkmak için /exit kullan.',
+  guideVerify: 'Sohbet için cihaz doğrulaması gerekli. /identity ile tam kodları güvenilir bir ikinci kanalda karşılaştır, ardından /verify kullan.',
+  guideChanged: 'Sabitlenen cihaz değişti. Bu cihaza gönderim engellendi. Karşı tarafla güvenilir bir kanaldan kontrol et.',
+  guideReady: 'Cihazı doğrulanmış bir sohbet var. Açmak için /conversations ve /chat kullan.',
+  guideInvite: 'Sohbet başlatmak için /invite @kullanıcı:sunucu, gelen davetlere bakmak için /requests kullan.',
+  guideUnavailable: 'Uygun sohbet yok. Daveti ve oda üyeliğini karşı tarafla kontrol et.',
+  guideBlocked: 'Sohbetin hazır olduğu doğrulanamadı. Komutlarla devam et veya /guide ile yeniden dene.',
+  guideTimeout: 'Hazırlık denetimi zaman aşımına uğradı. Bağlantıyı doctor ile kontrol et.',
+  demoHelp: 'Kullanım: node lab/demo.ts [--lang en|tr]. Linux veya WSL’de geçici bir Synapse demosu başlatır ve seçilen terminal çıktısını gösterir.',
 } satisfies Record<keyof typeof en, string>;
 
 export const catalog = {en, tr};

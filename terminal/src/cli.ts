@@ -3,10 +3,10 @@ import type { Interface } from 'node:readline/promises';
 import { clearScreenDown, cursorTo, moveCursor } from 'node:readline';
 import { stdin, stdout } from 'node:process';
 import { Writable } from 'node:stream';
-import { Heartwood } from './client.ts';
+import type { Heartwood } from './client.ts';
 import { MatrixHttp, login, register } from './matrix.ts';
-import { deviceCode, formatDeviceCode, safeText } from './policy.ts';
-import { Profile } from './profile.ts';
+import { deviceCode, formatDeviceCode, matrixOrigin, safeText } from './policy.ts';
+import type { Profile } from './profile.ts';
 import type { ChatLine } from './chat-feed.ts';
 import { HistoryNavigator } from './history-navigation.ts';
 import type { SendResult } from './send-attempts.ts';
@@ -17,6 +17,7 @@ import { commandName, startupMode, verificationCode } from './commands.ts';
 import { formatError } from './failures.ts';
 import { selectLanguage, translator } from './locale.ts';
 import type { Language, Translator } from './locale.ts';
+import { diagnose } from './doctor.ts';
 
 type CliFailure = 'invalidCommand' | 'interactiveRequired' | 'passphraseMismatch' | 'acceptFirst' | 'chooseConversation';
 class CliError extends Error {
@@ -170,7 +171,22 @@ async function secret(input: TerminalInput, prompt: string, signal: AbortSignal)
   }
 }
 
-async function shell(client: Heartwood, input: TerminalInput, closed: AbortController, ui: Translator): Promise<void> {
+async function showGuide(client: Heartwood, signal: AbortSignal, ui: Translator): Promise<void> {
+  const labels = {accept: 'guideAccept', wait: 'guideWait', verify: 'guideVerify', changed: 'guideChanged',
+    ready: 'guideReady', invite: 'guideInvite', unavailable: 'guideUnavailable'} as const;
+  const deadline = AbortSignal.timeout(4_000);
+  try {
+    const step = await client.http.withSignal(AbortSignal.any([signal, deadline]), () => client.onboardingStep());
+    if (!signal.aborted) console.log(ui.text(labels[step]));
+  } catch (error) {
+    if (signal.aborted) return;
+    console.log(ui.text('guideBlocked'));
+    console.error(deadline.aborted ? ui.text('guideTimeout') : errorText(error, ui));
+  }
+}
+
+async function shell(client: Heartwood, input: TerminalInput, closed: AbortController, ui: Translator,
+  guided = false): Promise<void> {
   const history = new HistoryNavigator((room, before) => client.historyPage(room, before));
   const conversations = new ConversationList();
   const reader = createInterface({ input, output: stdout, terminal: true, historySize: 0 });
@@ -178,6 +194,7 @@ async function shell(client: Heartwood, input: TerminalInput, closed: AbortContr
   reader.once('SIGINT', () => reader.close());
   try {
     console.log(ui.text('signedIn', {user: safeText(client.identity.user)}));
+    if (guided) await showGuide(client, closed.signal, ui);
     while (true) {
       const line = await reader.question('heartwood> ', {signal: closed.signal}).catch(() => '/exit');
       const [word, target = ''] = line.trim().split(/\s+/);
@@ -186,6 +203,7 @@ async function shell(client: Heartwood, input: TerminalInput, closed: AbortContr
       try {
         switch (command) {
           case '/help': console.log(ui.help()); break;
+          case '/guide': await showGuide(client, closed.signal, ui); break;
           case '/identity':
             console.log(safeText(ui.text('identity', {user: client.identity.user, device: client.identity.device})));
             console.log(formatDeviceCode(deviceCode(client.identity)));
@@ -263,16 +281,62 @@ async function shell(client: Heartwood, input: TerminalInput, closed: AbortContr
   }
 }
 
+async function onboarding(input: TerminalInput, signal: AbortSignal, ui: Translator):
+Promise<{mode: 'register' | 'login'; name: string; server: string; username: string} | undefined> {
+  const reader = createInterface({input, output: stdout, terminal: true, historySize: 0});
+  const closed = new AbortController();
+  reader.once('close', () => closed.abort());
+  const active = AbortSignal.any([signal, closed.signal]);
+  const answer = async (prompt: string) => (await reader.question(prompt, {signal: active})).trim();
+  try {
+    console.log(ui.text('guideIntro'));
+    let mode: ReturnType<typeof startupMode>;
+    while (!mode) {
+      const selected = await answer(ui.text('guideMode'));
+      if (selected === 'q') return undefined;
+      mode = startupMode(selected);
+      if (!mode) console.log(ui.text('guideModeInvalid'));
+    }
+    let server: string | undefined;
+    while (!server) {
+      try { server = matrixOrigin(await answer(ui.text('guideServer'))); }
+      catch (error) {
+        if (active.aborted) throw error;
+        console.error(errorText(error, ui));
+      }
+    }
+    const name = await answer(ui.text('guideProfile'));
+    const username = await answer(ui.text('guideUsername'));
+    return {mode, name, server, username};
+  } catch (error) {
+    if (active.aborted) return undefined;
+    throw error;
+  } finally {
+    reader.close();
+  }
+}
+
 async function main(args: string[], ui: Translator): Promise<void> {
   const [word, name, server, username] = args;
   if (!word || word === '--help') { console.log(ui.help()); return; }
+  if (word === 'doctor' && args.length <= 2) {
+    const results = await diagnose(name);
+    for (const {check, level, detail} of results) {
+      console.log(ui.text('doctorResult', {level: ui.text(level), check: ui.text(check), detail: ui.text(detail)}));
+    }
+    console.log(ui.text('doctorScope'));
+    if (results.some(({level}) => level === 'doctorFail')) process.exitCode = 1;
+    return;
+  }
+  const guided = word === 'onboard' && args.length === 1;
   const mode = startupMode(word);
-  if (!mode || !name || !server || !username || args.length !== 4) {
+  const direct = mode && name && server && username && args.length === 4 ? {mode, name, server, username} : undefined;
+  if (!guided && !direct) {
     throw new CliError('invalidCommand');
   }
   if (!stdin.isTTY || !stdout.isTTY) throw new CliError('interactiveRequired');
+  const [{Heartwood}, {Profile}] = await Promise.all([import('./client.ts'), import('./profile.ts')]);
   const closed = new AbortController();
-  const http = new MatrixHttp(server, closed.signal);
   const interrupt = () => closed.abort();
   const input = new TerminalInput(interrupt, () => stdout.write('\x07'));
   const wasRaw = stdin.isRaw;
@@ -281,23 +345,26 @@ async function main(args: string[], ui: Translator): Promise<void> {
   let client: Heartwood | undefined;
   process.on('SIGINT', interrupt);
   try {
-    profile = await Profile.open(name, http.origin, username);
-    closed.signal.throwIfAborted();
     stdin.setRawMode(true);
     stdin.pipe(input);
     stdout.write('\x1b[?2004h');
     bracketed = true;
+    const options = direct ?? await onboarding(input, closed.signal, ui);
+    if (!options || closed.signal.aborted) return;
+    const http = new MatrixHttp(options.server, closed.signal);
+    profile = await Profile.open(options.name, http.origin, options.username);
+    closed.signal.throwIfAborted();
     const password = await secret(input, ui.text('accountPassword'), closed.signal);
-    if (mode === 'register') {
-      await register(http, username, password, await secret(input, ui.text('registrationToken'), closed.signal));
+    if (options.mode === 'register') {
+      await register(http, options.username, password, await secret(input, ui.text('registrationToken'), closed.signal));
       console.log(ui.text('accountCreated'));
     }
     const passphrase = await secret(input, ui.text('storePassphrase'), closed.signal);
     if (!profile.data.identity && passphrase !== await secret(input, ui.text('confirmPassphrase'), closed.signal)) {
       throw new CliError('passphraseMismatch');
     }
-    client = await Heartwood.open(http, profile, await login(http, username, password, profile.data.device), passphrase);
-    await shell(client, input, closed, ui);
+    client = await Heartwood.open(http, profile, await login(http, options.username, password, profile.data.device), passphrase);
+    await shell(client, input, closed, ui, guided);
   } catch (error) {
     if (!closed.signal.aborted) throw error;
   } finally {

@@ -1,5 +1,6 @@
 export const aliases = {
   '/help': '/yardim',
+  '/guide': '/rehber',
   '/identity': '/kimlik',
   '/invite': '/davet',
   '/requests': '/istekler',
