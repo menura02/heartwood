@@ -37,3 +37,14 @@ test('invalid pages and a stationary cursor are rejected', async () => {
     {chunk: [{...event('$1'), content: []}], start: 'a'},
   ]) await assert.rejects(readHistoryPage(async () => response, room, 'a'));
 });
+
+test('history validates encrypted event identifiers and timestamps while retaining extension events', async () => {
+  const extension = {type: 'com.example.custom', content: {more: null}};
+  const encrypted = {...event('$2'), origin_server_ts: 1700000000000};
+  const request = (chunk: unknown[]) => readHistoryPage(async () => ({start: 'a', chunk}), room);
+  assert.deepEqual((await request([encrypted, extension])).events, [extension, encrypted]);
+  for (const invalid of [{...encrypted, event_id: 'missing-sigil'}, {...encrypted, sender: undefined},
+    {...encrypted, sender: '@alice:example.invalid/path'}, {...encrypted, origin_server_ts: 1.5}]) {
+    await assert.rejects(request([extension, invalid]), {code: 'invalidHistoryPage'});
+  }
+});

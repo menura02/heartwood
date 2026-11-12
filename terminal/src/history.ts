@@ -1,31 +1,18 @@
 import { HeartwoodError } from './failures.ts';
 import { part } from './matrix.ts';
+import { isEvent, isRecord, isToken } from './matrix-response.ts';
+import type { MatrixEvent } from './matrix-response.ts';
 import type { ChatLine } from './chat-feed.ts';
 
-export interface HistoryEvent {
-  type: string;
-  event_id?: string;
-  sender?: string;
-  origin_server_ts?: number;
-  content: Record<string, unknown>;
-}
+export type HistoryEvent = MatrixEvent;
 
 export interface RawHistoryPage { events: HistoryEvent[]; next?: string }
 export interface HistoryPage { lines: ChatLine[]; next?: string }
 export type HistoryRequest = (path: string) => Promise<unknown>;
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function isToken(value: unknown): value is string {
-  return typeof value === 'string' && value.length > 0;
-}
-
 function isHistoryEvent(value: unknown): value is HistoryEvent {
-  return isRecord(value) && isToken(value.type) && isRecord(value.content) &&
-    (value.event_id === undefined || isToken(value.event_id)) &&
-    (value.sender === undefined || isToken(value.sender));
+  return isEvent(value) && (value.type !== 'm.room.encrypted' ||
+    (value.event_id !== undefined && value.sender !== undefined));
 }
 
 export async function readHistoryPage(request: HistoryRequest, room: string, before?: string): Promise<RawHistoryPage> {

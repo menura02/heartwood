@@ -37,6 +37,10 @@ const en = {
   keyTargetMismatch: 'The key distribution target does not match the verified device.',
   matrixRedirect: 'A Matrix redirect was rejected.',
   matrixInvalidJson: 'The server did not return valid JSON.',
+  matrixInvalidResponse: 'The server returned an invalid Matrix response.',
+  matrixResponseTooLarge: 'The server response exceeded the size limit.',
+  matrixBodyInterrupted: 'The connection was interrupted while reading the server response.',
+  matrixTimeout: 'The Matrix request timed out.',
   registrationFlowMissing: 'The server does not offer registration with a token.',
   registrationTokenRejected: 'The registration token could not be verified.',
   invalidLoginSession: 'The server did not return the expected session or device ID.',
@@ -47,6 +51,8 @@ const en = {
   profileLockUncertain: 'The profile has a legacy or unrecognized lock. Close all clients and inspect the lock.',
   invalidProfileOrUsername: 'Invalid profile name or username.',
   profileRecordMissing: 'The profile record is missing. Existing files have been kept.',
+  profileRecordInvalid: 'The profile record is invalid. Existing files have been kept.',
+  profileSchemaUnsupported: 'This profile format is unsupported. Existing files have been kept.',
   profileBindingMismatch: 'This profile is bound to a different server or user.',
   sendInProgress: 'A send is already in progress.',
   noPendingSend: 'There is no pending send.',
@@ -67,7 +73,7 @@ const en = {
   demoArguments: 'Invalid demo arguments. Use node lab/demo.ts --help.',
   demoFailed: 'The demo did not finish. Check the local Synapse setup and run the terminal integration test for details.',
   invalidLanguage: 'Invalid language selection. Use --lang en or --lang tr, or set HEARTWOOD_LANG to en or tr.',
-  matrixTransport: 'Could not connect to the server, or the request timed out.',
+  matrixTransport: 'Could not connect to the server.',
   matrixSessionExpired: 'The Matrix session is invalid or has expired. Sign in again.',
   matrixForbidden: 'The Matrix server denied permission for this operation.',
   matrixRateLimited: 'The Matrix server received too many requests. Try again later.',
@@ -120,6 +126,10 @@ const tr: Record<FailureCode, string> = {
   keyTargetMismatch: 'Anahtar dağıtım hedefi doğrulanmış cihazla eşleşmiyor.',
   matrixRedirect: 'Matrix yönlendirmesi reddedildi.',
   matrixInvalidJson: 'Sunucu geçerli bir JSON yanıtı döndürmedi.',
+  matrixInvalidResponse: 'Sunucu geçersiz bir Matrix yanıtı döndürdü.',
+  matrixResponseTooLarge: 'Sunucu yanıtı boyut sınırını aştı.',
+  matrixBodyInterrupted: 'Sunucu yanıtı okunurken bağlantı kesildi.',
+  matrixTimeout: 'Matrix isteği zaman aşımına uğradı.',
   registrationFlowMissing: 'Sunucuda belirteçli kayıt akışı bulunamadı.',
   registrationTokenRejected: 'Kayıt belirteci doğrulanamadı.',
   invalidLoginSession: 'Sunucu beklenen oturum veya cihaz kimliğini döndürmedi.',
@@ -130,6 +140,8 @@ const tr: Record<FailureCode, string> = {
   profileLockUncertain: 'Profilde eski veya belirsiz bir kilit var. Tüm istemcileri kapatıp kilidi incele.',
   invalidProfileOrUsername: 'Profil veya kullanıcı adı geçersiz.',
   profileRecordMissing: 'Profil kaydı eksik. Mevcut dosyalar korunuyor.',
+  profileRecordInvalid: 'Profil kaydı geçersiz. Mevcut dosyalar korunuyor.',
+  profileSchemaUnsupported: 'Bu profil biçimi desteklenmiyor. Mevcut dosyalar korunuyor.',
   profileBindingMismatch: 'Bu profil farklı bir sunucuya veya kullanıcıya bağlı.',
   sendInProgress: 'Gönderim işlemi sürüyor.',
   noPendingSend: 'Bekleyen gönderim yok.',
@@ -150,7 +162,7 @@ const tr: Record<FailureCode, string> = {
   demoArguments: 'Demo argümanları geçersiz. node lab/demo.ts --help kullan.',
   demoFailed: 'Demo tamamlanamadı. Yerel Synapse kurulumunu kontrol et ve ayrıntılar için terminal entegrasyon testini çalıştır.',
   invalidLanguage: 'Geçersiz dil seçimi. --lang en veya --lang tr kullan ya da HEARTWOOD_LANG değerini en veya tr yap.',
-  matrixTransport: 'Sunucu bağlantısı kurulamadı veya istek zaman aşımına uğradı.',
+  matrixTransport: 'Sunucu bağlantısı kurulamadı.',
   matrixSessionExpired: 'Matrix oturumu geçersiz veya süresi dolmuş. Yeniden giriş yap.',
   matrixForbidden: 'Matrix sunucusu bu işleme izin vermedi.',
   matrixRateLimited: 'Matrix sunucusu çok fazla istek aldı. Bir süre sonra yeniden dene.',
@@ -189,32 +201,34 @@ const matrixCodes = {
   M_INVALID_USERNAME: 'matrixInvalidUsername',
 } satisfies Record<string, FailureCode>;
 
-function matrixMessage(status: number, code: string, language: Language): string {
+function matrixMessage(status: number, code: string, language: Language, bodyFailure?: FailureCode): string {
   if (Object.hasOwn(matrixCodes, code)) {
     return `${message(matrixCodes[code as keyof typeof matrixCodes], language)} [${code}]`;
   }
-  const failure = [502, 503, 504].includes(status) ? 'matrixUnavailable' : 'matrixRequest';
+  const failure = bodyFailure ?? ([502, 503, 504].includes(status) ? 'matrixUnavailable' : 'matrixRequest');
   const http = Number.isInteger(status) && status >= 100 && status <= 599 ? ` HTTP ${status}` : '';
   return `${message(failure, language)} [HW_MATRIX_REQUEST${http}]`;
 }
 
 export class MatrixTransportFailure extends HeartwoodError {
-  constructor() { super('matrixTransport'); }
+  constructor(code: 'matrixTransport' | 'matrixTimeout' | 'matrixBodyInterrupted' = 'matrixTransport') { super(code); }
 }
 
 export class MatrixFailure extends Error {
   readonly status: number;
   readonly code: string;
+  readonly bodyFailure?: FailureCode;
 
-  constructor(status: number, code: string) {
-    super(matrixMessage(status, code, 'en'));
+  constructor(status: number, code: string, bodyFailure?: FailureCode) {
+    super(matrixMessage(status, code, 'en', bodyFailure));
     this.status = status;
     this.code = code;
+    this.bodyFailure = bodyFailure;
   }
 }
 
 export function formatError(error: unknown, language: Language): string {
   if (error instanceof HeartwoodError && Object.hasOwn(en, error.code)) return message(error.code, language);
-  if (error instanceof MatrixFailure) return matrixMessage(error.status, error.code, language);
+  if (error instanceof MatrixFailure) return matrixMessage(error.status, error.code, language, error.bodyFailure);
   return `${message('unexpected', language)} [HW_UNEXPECTED]`;
 }

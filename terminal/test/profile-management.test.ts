@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
+import { once } from 'node:events';
 import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -138,6 +139,49 @@ test('concurrent open and removal cannot delete the profile held by the opener',
     }
   } finally {
     await rm(root, {recursive: true, force: true});
+  }
+});
+
+test('another process cannot reopen a profile between lock retirement and quarantine', {timeout: 15_000}, async context => {
+  const root = await mkdtemp(join(tmpdir(), 'heartwood-retirement-race-'));
+  context.after(() => rm(root, {recursive: true, force: true}));
+  const original = await Profile.open('alice', origin, 'alice', root);
+  await original.close();
+  const worker = spawn(process.execPath, ['--input-type=module', '-e', `
+    import fs from 'node:fs/promises';
+    import { syncBuiltinESMExports } from 'node:module';
+    import { basename } from 'node:path';
+    import { removeProfile } from ${JSON.stringify(new URL('../src/profile-management.ts', import.meta.url).href)};
+    const rename = fs.rename;
+    fs.rename = async (source, target) => {
+      if (basename(source) === 'alice') {
+        process.send('retired');
+        await new Promise(resolve => process.once('message', resolve));
+      }
+      return rename(source, target);
+    };
+    syncBuiltinESMExports();
+    await removeProfile('alice', process.argv[1]);
+    process.disconnect();
+  `, root], {stdio: ['ignore', 'ignore', 'inherit', 'ipc']});
+  const exit = once(worker, 'exit');
+  try {
+    await Promise.race([
+      once(worker, 'message').then(([message]) => assert.equal(message, 'retired')),
+      exit.then(() => { throw new Error('Removal fixture stopped before quarantine'); }),
+    ]);
+    // The per-profile OS lock is already released, while the cross-process operation gate is still held.
+    await assert.rejects(Profile.open('alice', origin, 'alice', root), {code: 'profileInUse'});
+    assert.equal((await inspectProfile('alice', root)).record?.device, original.data.device);
+    worker.send('continue');
+    const [code] = await exit;
+    assert.equal(code, 0);
+    const replacement = await Profile.open('alice', origin, 'alice', root);
+    try { assert.notEqual(replacement.data.device, original.data.device); }
+    finally { await replacement.close(); }
+  } finally {
+    if (worker.exitCode === null && worker.signalCode === null) worker.kill('SIGKILL');
+    await exit;
   }
 });
 

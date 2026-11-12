@@ -11,6 +11,11 @@ import type { ToDeviceRequest } from '@matrix-org/matrix-sdk-crypto-nodejs';
 import { MatrixFailure, MatrixHttp, MatrixTransportFailure, part } from './matrix.ts';
 import type { Login } from './matrix.ts';
 import {
+  hasEventId, hasIgnoredUsers, hasJoinedRooms, hasRoomId, isEvent, isKeyClaim,
+  isKeyQuery, isKeyUpload, isRecord, isRoomState, isSyncResponse, validated,
+} from './matrix-response.ts';
+import type { KeyQueryResponse } from './matrix-response.ts';
+import {
   assertRoom, assertRoomMembership, assertRoomSettings, assertTargets, assertTrusted,
   deviceCode, localUser, megolm, normalizeDeviceCode,
 } from './policy.ts';
@@ -24,23 +29,7 @@ import { SendAttempts } from './send-attempts.ts';
 import type { PendingSendStatus, SendResult } from './send-attempts.ts';
 import type { Conversation } from './conversation-list.ts';
 import { SessionUnread } from './unread.ts';
-import type { JoinedRooms } from './unread.ts';
-
-interface Event { type: string; event_id?: string; sender?: string; content: Record<string, unknown> }
-interface SyncResponse {
-  next_batch: string;
-  device_lists?: { changed?: string[]; left?: string[] };
-  device_one_time_keys_count?: Record<string, number>;
-  device_unused_fallback_key_types?: string[];
-  to_device?: { events?: Event[] };
-  rooms?: { invite?: Record<string, { invite_state: { events: StateEvent[] } }>;
-    leave?: Record<string, unknown>; join?: JoinedRooms };
-}
-interface DeviceKeys {
-  user_id: string;
-  device_id: string;
-  keys: Record<string, string>;
-}
+import { SyncOwner } from './sync-owner.ts';
 
 interface PreparedSend {
   path: string;
@@ -78,7 +67,8 @@ export class Heartwood {
   private readonly machine: OlmMachine;
   private readonly invites: Map<string, string>;
   private readonly sends = new SendAttempts<PreparedSend>();
-  private syncPending?: Promise<string>;
+  private readonly syncOwner = new SyncOwner<string>();
+  private closing?: Promise<void>;
   readonly unread = new SessionUnread();
   private firstSync = true;
 
@@ -104,44 +94,48 @@ export class Heartwood {
       keyPath, passphrase, StoreType.Sqlite).catch(() => {
       throw new HeartwoodError('cryptoStoreOpenFailed');
     });
+    let client: Heartwood | undefined;
     try {
-      const client = new Heartwood(http, profile, machine, session);
+      client = new Heartwood(http, profile, machine, session);
       if (profile.data.identity) assertTrusted(profile.data.identity, client.identity);
       else await profile.save({identity: client.identity});
       await client.sync();
       return client;
     } catch (error) {
-      machine.close();
+      if (client) await client.close();
+      else machine.close();
       throw error;
     }
   }
 
-  close(): void { this.machine.close(); }
+  close(): Promise<void> {
+    return this.closing ??= this.syncOwner.stop().then(() => this.machine.close());
+  }
 
-  private async keyRequest(request: { type: RequestType; id: string; body: string }) {
+  private async keyRequest(request: { type: RequestType; id: string; body: string }): Promise<KeyQueryResponse | undefined> {
     const endpoint = {
       [RequestType.KeysUpload]: 'keys/upload',
       [RequestType.KeysQuery]: 'keys/query',
       [RequestType.KeysClaim]: 'keys/claim',
     }[request.type as RequestType.KeysUpload | RequestType.KeysQuery | RequestType.KeysClaim];
     if (!endpoint) throw new HeartwoodError('unexpectedKeyRequest');
-    const response = await this.http.request<{device_keys?: Record<string, Record<string, DeviceKeys>>}>(
-      'POST', endpoint, JSON.parse(request.body));
+    const response = await this.http.request('POST', endpoint, JSON.parse(request.body));
+    let keys: KeyQueryResponse | undefined;
+    if (endpoint === 'keys/query') keys = validated(response, isKeyQuery, 'invalidDeviceKeys');
+    else validated(response, endpoint === 'keys/upload' ? isKeyUpload : isKeyClaim, 'matrixInvalidResponse');
     await this.machine.markRequestAsSent(request.id, request.type, JSON.stringify(response));
-    return response;
+    return keys;
   }
 
   sync(): Promise<string> {
-    this.syncPending ??= this.syncOnce().finally(() => { this.syncPending = undefined; });
-    return this.syncPending;
+    return this.syncOwner.run(owner => this.http.withSignal(owner, () => this.syncOnce()), this.http.currentSignal);
   }
 
   private async syncOnce(): Promise<string> {
     const query = new URLSearchParams({ timeout: '0', set_presence: 'offline' });
     const previous = this.profile.data.sync;
     if (previous) query.set('since', previous.cursor);
-    const response = await this.http.request<SyncResponse>('GET', 'sync?' + query);
-    if (!response.next_batch) throw new HeartwoodError('invalidSyncResponse');
+    const response = validated(await this.http.request('GET', 'sync?' + query), isSyncResponse, 'invalidSyncResponse');
     const users = (values: string[] = []) => values.map(value => new UserId(value));
     await this.machine.receiveSyncChanges(JSON.stringify(response.to_device?.events ?? []),
       new DeviceLists(users(response.device_lists?.changed), users(response.device_lists?.left)),
@@ -174,7 +168,7 @@ export class Heartwood {
 
   async invite(peer: string): Promise<string> {
     this.activePeer(peer);
-    const { room_id } = await this.http.request<{room_id: string}>('POST', 'createRoom', {
+    const response = await this.http.request('POST', 'createRoom', {
       visibility: 'private', preset: 'private_chat', is_direct: true, invite: [peer],
       creation_content: { 'm.federate': false },
       initial_state: [
@@ -183,7 +177,7 @@ export class Heartwood {
         { type: 'm.room.history_visibility', state_key: '', content: { history_visibility: 'joined' } },
       ],
     });
-    return room_id;
+    return validated(response, hasRoomId, 'matrixInvalidResponse').room_id;
   }
 
   async pending(): Promise<Array<{room: string; peer: string}>> {
@@ -207,8 +201,11 @@ export class Heartwood {
     const peer = this.invites.get(room);
     if (!peer) throw new HeartwoodError('inviteNotVerified');
     this.activePeer(peer);
-    await this.http.request('POST', `join/${part(room)}`, {});
+    const response = await this.http.request('POST', `join/${part(room)}`, {});
     try {
+      if (validated(response, hasRoomId, 'matrixInvalidResponse').room_id !== room) {
+        throw new HeartwoodError('matrixInvalidResponse');
+      }
       if (await this.roomPeer(room) !== peer) throw new HeartwoodError('invitePeerChanged');
     } catch (error) {
       await this.leave(room);
@@ -224,7 +221,7 @@ export class Heartwood {
   }
 
   private async leave(room: string): Promise<void> {
-    await this.http.request('POST', `rooms/${part(room)}/leave`, {});
+    validated(await this.http.request('POST', `rooms/${part(room)}/leave`, {}), isRecord, 'matrixInvalidResponse');
     this.invites.delete(room);
   }
 
@@ -236,12 +233,16 @@ export class Heartwood {
       await this.profile.save({blocked: [...this.profile.data.blocked, peer], pins});
     }
     const path = `user/${part(this.identity.user)}/account_data/m.ignored_user_list`;
-    const previous = await this.http.request<{ ignored_users: Record<string, object> }>('GET', path)
+    const previous = await this.http.request('GET', path)
+      .then(response => validated(response, hasIgnoredUsers, 'matrixInvalidResponse'))
       .catch((error: unknown) => {
-        if (error instanceof MatrixFailure && error.status === 404) return { ignored_users: {} };
+        if (error instanceof MatrixFailure && error.status === 404 && error.code === 'M_NOT_FOUND') {
+          return {ignored_users: {}};
+        }
         throw error;
       });
-    await this.http.request('PUT', path, { ignored_users: { ...previous.ignored_users, [peer]: {} } });
+    const response = await this.http.request('PUT', path, {ignored_users: {...previous.ignored_users, [peer]: {}}});
+    validated(response, isRecord, 'matrixInvalidResponse');
     for (const [room, sender] of this.invites) {
       if (sender === peer) await this.leave(room);
     }
@@ -254,12 +255,14 @@ export class Heartwood {
   }
 
   async rooms(): Promise<string[]> {
-    return (await this.http.request<{joined_rooms: string[]}>('GET', 'joined_rooms')).joined_rooms;
+    const response = await this.http.request('GET', 'joined_rooms');
+    return validated(response, hasJoinedRooms, 'matrixInvalidResponse').joined_rooms;
   }
 
-  private roomState(room: string): Promise<StateEvent[]> {
+  private async roomState(room: string): Promise<StateEvent[]> {
     if (!room.startsWith('!')) throw new HeartwoodError('roomIdRequired');
-    return this.http.request('GET', `rooms/${part(room)}/state`);
+    const response = await this.http.request('GET', `rooms/${part(room)}/state`);
+    return validated(response, isRoomState, 'matrixInvalidResponse');
   }
 
   private async roomPeer(room: string): Promise<string> {
@@ -367,16 +370,12 @@ export class Heartwood {
     const response = await this.keyRequest(this.machine.queryKeysForUsers(users.map(user => new UserId(user))));
     const devices: DeviceIdentity[] = [];
     for (const user of users) {
-      const entries = Object.entries(response.device_keys?.[user] ?? {});
+      const entries = Object.entries(response?.device_keys?.[user] ?? {});
       if (entries.length === 0) throw new HeartwoodError('noVerifiableDevice');
       if (entries.length > 1) throw new HeartwoodError('tooManyDevices');
       const [device, key] = entries[0];
       const ed = key.keys[`ed25519:${device}`];
       const curve = key.keys[`curve25519:${device}`];
-      if (key.device_id !== device || key.user_id !== user ||
-          ![ed, curve].every(value => typeof value === 'string' && /^[A-Za-z0-9+/]{43}$/.test(value))) {
-        throw new HeartwoodError('invalidDeviceKeys');
-      }
       devices.push({ user, device, ed, curve });
     }
     return devices;
@@ -396,8 +395,8 @@ export class Heartwood {
     const body = JSON.parse(request.body) as unknown;
     if (request.eventType !== 'm.room.encrypted') throw new HeartwoodError('unencryptedKeyEvent');
     assertTargets(body, devices);
-    const response = await this.http.request('PUT',
-      `sendToDevice/${part(request.eventType)}/${part(request.txnId)}`, body);
+    const response = validated(await this.http.request('PUT',
+      `sendToDevice/${part(request.eventType)}/${part(request.txnId)}`, body), isRecord, 'matrixInvalidResponse');
     await this.machine.markRequestAsSent(request.id, request.type, JSON.stringify(response));
   }
 
@@ -489,8 +488,8 @@ export class Heartwood {
   }
 
   private async submitSend(prepared: PreparedSend): Promise<string> {
-    const response = await this.http.request<{event_id: string}>('PUT', prepared.path, prepared.ciphertext);
-    return response.event_id;
+    const response = await this.http.request('PUT', prepared.path, prepared.ciphertext);
+    return validated(response, hasEventId, 'matrixInvalidResponse').event_id;
   }
 
   async history(room: string): Promise<ChatLine[]> {
@@ -546,13 +545,13 @@ export class Heartwood {
     const expected = event.sender === peer ? this.profile.data.pins[peer] : this.identity;
     try {
       const clear = await this.machine.decryptRoomEvent(JSON.stringify(event), new RoomId(room));
-      const value = JSON.parse(clear.event) as Event;
+      const value: unknown = JSON.parse(clear.event);
       if (!expected || clear.sender?.toString() !== expected.user ||
           (clear.senderDevice && clear.senderDevice.toString() !== expected.device) ||
           clear.senderCurve25519Key !== expected.curve ||
           clear.senderClaimedEd25519Key !== expected.ed ||
           clear.forwardingCurve25519KeyChain.length ||
-          value.type !== 'm.room.message' || value.content.msgtype !== 'm.text' ||
+          !isEvent(value) || value.type !== 'm.room.message' || value.content.msgtype !== 'm.text' ||
           typeof value.content.body !== 'string') return line;
       return {...line, body: value.content.body};
     } catch {

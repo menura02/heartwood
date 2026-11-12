@@ -4,7 +4,7 @@ import { LiveTimeline } from '../src/live-timeline.ts';
 import { readForwardPage } from '../src/history.ts';
 import type { HistoryEvent } from '../src/history.ts';
 
-const event = (n: number) => ({type: 'm.room.encrypted', event_id: '$' + n, content: {}});
+const event = (n: number) => ({type: 'm.room.encrypted', event_id: '$' + n, sender: '@peer:localhost', content: {}});
 const decode = async (event: HistoryEvent) => ({id: event.event_id!, sender: '@peer:localhost', body: event.event_id});
 
 test('live catch-up advances across 120 events, overlap and an empty page', async () => {

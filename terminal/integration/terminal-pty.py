@@ -131,7 +131,8 @@ def relay(origin, history=None):
             pass
 
         def forward(self):
-            if history and "/messages?" in self.path and "dir=b" in self.path and history[0].is_set():
+            delayed = history and "/messages?" in self.path and "dir=b" in self.path and history[0].is_set()
+            if delayed:
                 history[0].clear()
                 history[1].set()
                 if not history[2].wait(10):
@@ -165,6 +166,8 @@ def relay(origin, history=None):
                     pass  # A chat may close while a deliberately delayed response is in flight.
             finally:
                 connection.close()
+                if delayed:
+                    history[3].set()
 
         do_GET = do_POST = do_PUT = forward
 
@@ -180,8 +183,8 @@ def relay(origin, history=None):
 
 
 def scenario(node, origin, root, token):
-    arm_history, history_requested, release_history = (threading.Event() for _ in range(3))
-    with relay(origin, (arm_history, history_requested, release_history)) as (
+    arm_history, history_requested, release_history, history_finished = (threading.Event() for _ in range(4))
+    with relay(origin, (arm_history, history_requested, release_history, history_finished)) as (
             relayed, fail_sync, hold_sync, request_held), contextlib.ExitStack() as stack:
         home = pathlib.Path(root) / "pty-home"
         alice = Terminal(node, home, "ptyalice", relayed)
@@ -201,12 +204,16 @@ def scenario(node, origin, root, token):
         bob.command("/unknown")
         bob.expect("Bilinmeyen komut")
         bob.expect("heartwood> ")
-        alice.command("/invite @ptybob:localhost")
-        room = alice.expect(rb"(![A-Za-z0-9_-]+(?::localhost)?)")[1].decode()
-        alice.expect("heartwood> ")
-        bob.command("/kabul " + room)
-        bob.expect("İstek kabul edildi.")
-        bob.expect("heartwood> ")
+        def invite_bob():
+            alice.command("/invite @ptybob:localhost")
+            invited = alice.expect(rb"(![A-Za-z0-9_-]+(?::localhost)?)")[1].decode()
+            alice.expect("heartwood> ")
+            bob.command("/kabul " + invited)
+            bob.expect("İstek kabul edildi.")
+            bob.expect("heartwood> ")
+            return invited
+
+        room, second_room = invite_bob(), invite_bob()
         for terminal, peer, name in [(alice, bob, "ptybob"), (bob, alice, "ptyalice")]:
             command = "/verify" if terminal is alice else "/dogrula"
             terminal.command(f"{command} @{name}:localhost {peer.code}")
@@ -261,12 +268,24 @@ def scenario(node, origin, root, token):
 
         history_requested.clear()
         release_history.clear()
+        history_finished.clear()
         arm_history.set()
         alice.command("/history")
         assert history_requested.wait(5), "No backward history request to cancel"
         alice.command("/back")
         alice.expect("heartwood> ")
+        start = alice.offset
+        alice.command("/chat " + second_room)
+        alice.expect(alice.chat_prompt)
         release_history.set()
+        assert history_finished.wait(5), "Delayed response did not finish after switching rooms"
+        alice.command("/status")
+        alice.expect("New send: allowed at check time")
+        end = alice.expect(alice.chat_prompt).start()
+        assert b"History page" not in alice.output[start:end], "Old history printed into the second room"
+        assert "Yeni geçmiş çığ".encode() not in alice.output[start:end], "Old message printed into the second room"
+        alice.command("/back")
+        alice.expect("heartwood> ")
         bob.command("While Alice is away")
         bob.expect("Şifreli olay sunucu tarafından kabul edildi.")
         alice.command("/conversations")
@@ -291,7 +310,9 @@ def scenario(node, origin, root, token):
         alice.command("Yapıştırma sonrası çalışıyor")
         bob.expect("@ptyalice:localhost  Yapıştırma sonrası çalışıyor")
         assert b"@ptyalice:localhost  YAPISTIRMA-MESAJI" not in bob.output
+        fail_sync.set()
         hold_sync.set()
+        alice.expect("Reconnecting…")
         assert request_held.wait(5), "No live request to cancel"
         alice.type("\x03")
         alice.assert_exit()
