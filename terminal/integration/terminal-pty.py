@@ -3,23 +3,24 @@ import http.client
 import http.server
 import os
 import pathlib
-import pty
 import re
-import select
 import socket
 import subprocess
 import sys
-import termios
 import threading
 import time
 import urllib.parse
 
+if sys.platform == "win32":
+    from conpty import ConPty
+else:
+    import pty
+    import select
+    import termios
+
 
 class Terminal:
-    def __init__(self, node, home, account, origin, turkish=False):
-        self.master, self.slave = pty.openpty()
-        termios.tcsetwinsize(self.slave, (30, 100))
-        self.flags = termios.tcgetattr(self.slave)[3]
+    def __init__(self, node, home, account, origin, turkish=False, guided=False):
         self.output = bytearray()
         self.offset = 0
         self.profile = home / ".heartwood" / account
@@ -27,21 +28,38 @@ class Terminal:
         self.chat_prompt = "sohbet> " if turkish else "chat> "
         environment = {**os.environ, "HOME": str(home), "TERM": "xterm-256color"}
         environment.pop("HEARTWOOD_LANG", None)
+        environment.pop("HEARTWOOD_TEST_REGISTRATION_TOKEN", None)
         startup = ["--lang", "tr", "kayit"] if turkish else ["register"]
         if turkish:
             environment["HEARTWOOD_LANG"] = "en"
-        self.child = subprocess.Popen(
-            [node, "src/cli.ts", *startup, account, origin, account],
-            stdin=self.slave, stdout=self.slave, stderr=self.slave,
-            env=environment,
-        )
+        command = [node, "src/cli.ts", *startup, account, origin, account]
+        if guided:
+            command = [node, "src/cli.ts", "--lang", "tr" if turkish else "en", "onboard"]
+        if sys.platform == "win32":
+            self.child = ConPty(command, {**environment, "USERPROFILE": str(home)})
+        else:
+            self.master, self.slave = pty.openpty()
+            try:
+                termios.tcsetwinsize(self.slave, (30, 100))
+                self.flags = termios.tcgetattr(self.slave)[3]
+                self.child = subprocess.Popen(command, stdin=self.slave, stdout=self.slave, stderr=self.slave,
+                                              env=environment)
+            except BaseException:
+                os.close(self.master)
+                os.close(self.slave)
+                raise
 
     def drain(self, timeout):
-        readable, _, _ = select.select([self.master], [], [], timeout)
-        if readable:
-            self.output.extend(os.read(self.master, 16384))
+        if sys.platform == "win32":
+            self.output.extend(self.child.read(timeout))
+        else:
+            readable, _, _ = select.select([self.master], [], [], timeout)
+            if readable:
+                self.output.extend(os.read(self.master, 16384))
 
     def expect(self, value, timeout=12):
+        if sys.platform == "win32" and isinstance(value, str):
+            value = value.rstrip(" ")
         pattern = re.compile(re.escape(value.encode()) if isinstance(value, str) else value)
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
@@ -56,7 +74,10 @@ class Terminal:
         raise AssertionError(f"Terminal did not reach {label} (exit {self.child.poll()})")
 
     def type(self, value):
-        os.write(self.master, value.encode())
+        if sys.platform == "win32":
+            self.child.write(value.encode())
+        else:
+            os.write(self.master, value.encode())
 
     def command(self, value):
         self.type(value + "\r")
@@ -79,11 +100,15 @@ class Terminal:
 
     def assert_exit(self):
         assert self.child.wait(timeout=5) == 0, "CLI exited with an error"
-        mask = termios.ECHO | termios.ICANON | termios.ISIG
-        assert termios.tcgetattr(self.slave)[3] & mask == self.flags & mask, "TTY mode not restored"
+        if sys.platform != "win32":
+            mask = termios.ECHO | termios.ICANON | termios.ISIG
+            assert termios.tcgetattr(self.slave)[3] & mask == self.flags & mask, "TTY mode not restored"
         assert not (self.profile / "in-use").exists(), "Profile lock remained"
 
     def close(self):
+        if sys.platform == "win32":
+            self.child.close()
+            return
         if self.child.poll() is None:
             self.child.kill()
             self.child.wait(timeout=5)
@@ -181,14 +206,15 @@ def scenario(node, origin, root, token):
         alice.expect("Reconnecting…")
         alice.expect("Connected.")
         alice.expect(alice.chat_prompt)
-        draft = "Yazıyorum çığ 🚲 " + "a" * 120
+        draft = "Yazıyorum çığ 🚲 " + "a" * (24 if sys.platform == "win32" else 120)
         alice.type(draft)
         bob.command("Türkçe bildirim şüÖ 🚀")
         bob.expect("Şifreli olay sunucu tarafından kabul edildi.")
         bob.expect(bob.chat_prompt)
         notification = alice.expect("@ptybob:localhost  Türkçe bildirim şüÖ 🚀")
         redraw = alice.expect(alice.chat_prompt + draft)
-        assert b"\r\n\r\n" in alice.output[notification.end():redraw.start()], "Wrapped redraw erased its notification row"
+        if sys.platform != "win32":
+            assert b"\r\n\r\n" in alice.output[notification.end():redraw.start()], "Wrapped redraw erased its notification row"
         alice.type("\r")
         alice.expect("The server accepted the encrypted event.")
         alice.expect(alice.chat_prompt)
@@ -217,4 +243,5 @@ def scenario(node, origin, root, token):
 
 if __name__ == "__main__":
     scenario(sys.argv[1], sys.argv[2], sys.argv[3], os.environ["HEARTWOOD_TEST_REGISTRATION_TOKEN"])
-    print("Linux PTY: both locales, aliases, secrets, redraw, Unicode, reconnect, history and exit passed.")
+    terminal = "Windows ConPTY" if sys.platform == "win32" else "Linux PTY"
+    print(f"{terminal}: both locales, aliases, secrets, redraw, Unicode, reconnect, history and exit passed.")

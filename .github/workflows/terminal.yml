@@ -24,7 +24,7 @@ jobs:
   unit:
     name: Typecheck and unit tests on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 10
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -48,6 +48,44 @@ jobs:
         env:
           HEARTWOOD_DOCS_BASE: ${{ github.event.pull_request.base.sha }}
           HEARTWOOD_DOCS_HEAD: ${{ github.event.pull_request.head.sha }}
+      - name: Set up Python for Windows ConPTY
+        if: runner.os == 'Windows'
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: '3.13'
+      - name: Provision isolated WSL Synapse for Windows ConPTY
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $distro = "HeartwoodCI-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
+          $archive = Join-Path $env:RUNNER_TEMP 'ubuntu-base-24.04.5-base-amd64.tar.gz'
+          $tar = Join-Path $env:RUNNER_TEMP "$distro.tar"
+          $install = Join-Path $env:RUNNER_TEMP $distro
+          Invoke-WebRequest "https://cdimage.ubuntu.com/ubuntu-base/releases/24.04/release/ubuntu-base-24.04.5-base-amd64.tar.gz" -OutFile $archive
+          if ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash -ne 'e77b6f10c2590cef872b33ee9f635a0e3fd1f57fb074c0e52b5c7f56147a0c86') {
+            throw 'Ubuntu Base checksum did not match.'
+          }
+          $source = [IO.File]::OpenRead($archive)
+          try {
+            $gzip = [IO.Compression.GZipStream]::new($source, [IO.Compression.CompressionMode]::Decompress)
+            try {
+              $output = [IO.File]::Create($tar)
+              try { $gzip.CopyTo($output) } finally { $output.Dispose() }
+            } finally { $gzip.Dispose() }
+          } finally { $source.Dispose() }
+          wsl.exe --import $distro $install $tar --version 1
+          if ($LASTEXITCODE -ne 0) { throw 'WSL import failed.' }
+          "HEARTWOOD_WSL_DISTRO=$distro" >> $env:GITHUB_ENV
+          "HEARTWOOD_SYNAPSE_PYTHON=/opt/heartwood/bin/python" >> $env:GITHUB_ENV
+          wsl.exe --distribution $distro --user root --exec sh -ec 'apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq python3-venv ca-certificates && python3 -m venv /opt/heartwood && /opt/heartwood/bin/python -m pip install --disable-pip-version-check matrix-synapse==1.164.2'
+          if ($LASTEXITCODE -ne 0) { throw 'Synapse installation failed.' }
+      - name: Test Windows CLI in real ConPTY
+        if: runner.os == 'Windows'
+        run: node integration/run-pty.ts
+      - name: Remove isolated Windows test distribution
+        if: always() && runner.os == 'Windows' && env.HEARTWOOD_WSL_DISTRO != ''
+        run: wsl.exe --unregister $env:HEARTWOOD_WSL_DISTRO
 
   synapse:
     name: Synapse integration on Linux
@@ -76,3 +114,5 @@ jobs:
           HEARTWOOD_SYNAPSE_PYTHON="$RUNNER_TEMP/heartwood-synapse/bin/python" node integration/run-local.ts
       - name: Run the real CLI in Linux PTYs
         run: HEARTWOOD_SYNAPSE_PYTHON="$RUNNER_TEMP/heartwood-synapse/bin/python" node integration/run-pty.ts
+      - name: Check guided setup in the disposable demo
+        run: HEARTWOOD_SYNAPSE_PYTHON="$RUNNER_TEMP/heartwood-synapse/bin/python" node lab/demo.ts
