@@ -1,12 +1,15 @@
 from hashlib import sha256
 import json
 from pathlib import Path
+import stat
 import tempfile
 import unittest
 from unittest.mock import patch
-from zipfile import ZipFile
+import warnings
+from zipfile import ZipFile, ZipInfo
 
 from release import PACKAGE_FILES, SEMVER_TAG, build_package, validate_tag, validate_version
+from smoke_release import extract_package, verify_checksum
 
 
 class ReleaseTest(unittest.TestCase):
@@ -90,6 +93,55 @@ class ReleaseTest(unittest.TestCase):
         (self.root / "terminal/src/cli.ts").unlink()
         with self.assertRaisesRegex(ValueError, "cli.ts"):
             build_package(self.root, "v0.3.0", self.root / "out")
+
+    def test_smoke_verifies_and_extracts_real_package(self):
+        output = self.root / "out"
+        build_package(self.root, "v0.3.0", output)
+        archive = output / "heartwood-terminal.zip"
+        verify_checksum(archive)
+        destination = self.root / "extracted"
+        extract_package(archive, destination)
+        self.assertEqual(sorted(path.relative_to(destination).as_posix()
+                                for path in destination.rglob("*") if path.is_file()),
+                         sorted(PACKAGE_FILES))
+        (output / "SHA256SUMS").write_text("incorrect", encoding="ascii")
+        with self.assertRaisesRegex(ValueError, "checksum"):
+            verify_checksum(archive)
+
+    def test_smoke_rejects_unsafe_or_unexpected_entries_before_extracting(self):
+        symlink = ZipInfo("terminal/src/cli.ts")
+        symlink.create_system = 3
+        symlink.external_attr = (stat.S_IFLNK | 0o777) << 16
+        for bad_entry in ["../outside", "/absolute", "C:/outside", "terminal\\src\\cli.ts",
+                          ".git/config", "terminal/.lab/token", "terminal/.heartwood/profile",
+                          "terminal/node_modules/x", "terminal/src/CLI.ts", "terminal/src/cli.ts",
+                          symlink]:
+            with self.subTest(entry=bad_entry):
+                archive = self.root / "crafted.zip"
+                with ZipFile(archive, "w") as package, warnings.catch_warnings():
+                    warnings.simplefilter("ignore", UserWarning)
+                    for name in PACKAGE_FILES:
+                        if name != getattr(bad_entry, "filename", None):
+                            package.writestr(name, "fixture")
+                    package.writestr(bad_entry, "unexpected")
+                destination = self.root / "extracted"
+                with self.assertRaises(ValueError):
+                    extract_package(archive, destination)
+                self.assertFalse(destination.exists())
+
+    def test_smoke_rejects_missing_or_oversized_entries(self):
+        archive = self.root / "crafted.zip"
+        with ZipFile(archive, "w") as package:
+            package.writestr(PACKAGE_FILES[0], "incomplete")
+        destination = self.root / "extracted"
+        with self.assertRaisesRegex(ValueError, "contents"):
+            extract_package(archive, destination)
+        with ZipFile(archive, "w") as package:
+            for name in PACKAGE_FILES:
+                package.writestr(name, "fixture")
+        with patch("smoke_release.MAX_PACKAGE_BYTES", 5), self.assertRaisesRegex(ValueError, "size"):
+            extract_package(archive, destination)
+        self.assertFalse(destination.exists())
 
 
 if __name__ == "__main__":

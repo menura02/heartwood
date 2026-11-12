@@ -2,6 +2,13 @@
 
 # Değişiklik kaydı
 
+## 0.6.1
+
+- Matrix yanıtları işlenmeden önce doğrulanır ve yanıt gövdesinin okunması boyutla sınırlanır.
+- Ortak eşzamanlama imleci sohbet iptalinden bağımsızdır. Profil kapanmadan önce devam eden işler tamamlanır.
+- Desteklenen sürümsüz profil metaverileri mevcut kilit altında geçirilir ve SDK anahtar deposu korunur.
+- Sürüm taslağı oluşturulmadan önce ZIP açılarak Windows ve Linux’ta kontrol edilir.
+
 ## 0.6.0
 
 - Bağlamsal Tab tamamlama ve yardım, canlı sohbet içinde geçmiş, sınırlı yerel arama ve oturum içi okunmamış göstergesi eklendi.

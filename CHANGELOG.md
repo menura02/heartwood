@@ -2,6 +2,13 @@
 
 # Changelog
 
+## 0.6.1
+
+- Validate Matrix responses and bound response body reads before processing them.
+- Keep the shared sync cursor independent of chat cancellation and drain in-flight work before closing the profile.
+- Migrate supported unversioned profile metadata under its existing lock and preserve the SDK key store.
+- Check the extracted release ZIP on Windows and Linux before creating a draft release.
+
 ## 0.6.0
 
 - Added contextual Tab completion and help, history inside live chat, bounded local search and session unread indicators.

@@ -38,5 +38,14 @@ Windows ConPTY testi için Windows Node.js, yerel Python 3.12 veya üstü ve yuk
 ## Sürüm hazırla
 
 1. `terminal/package.json`, kilit dosyası ve iki değişiklik kaydındaki sürümleri eşleştir. Windows ve Ubuntu kontrolleriyle Linux Synapse işi geçince PR’ı birleştir. Ortaya çıkan `main` commit’inde CI’ın geçtiğini doğrula. [CI iş akışı](.github/workflows/terminal.yml)
-2. Sürüme karşılık gelen etiketin yerelde ve uzakta boşta olduğunu doğrula. Test edilen commit’i etiketle ve etiketi gönder. Sürüm iş akışı etiketi ve commit’i doğrular, CI’ı yeniden çalıştırır ve kaynak ZIP’i, özet dosyası ve iki dilli notlarla bir taslak hazırlar. Aynı etiket için taslak veya sürüm varsa durur. [Sürüm iş akışı](.github/workflows/release.yml)
+2. Sürüme karşılık gelen etiketin yerelde ve uzakta boşta olduğunu doğrula. Test edilen commit’i etiketle ve etiketi gönder. Sürüm iş akışı etiketi ve commit’i doğrular, CI’ı yeniden çalıştırır ve özet dosyasıyla iki dilli notları içeren taslağı hazırlamadan önce ZIP’i Windows ve Ubuntu’da açıp sınar. Aynı etiket için taslak veya sürüm varsa durur. [Sürüm iş akışı](.github/workflows/release.yml)
 3. Taslağın commit’ini ve notlarını incele. GitHub’da yayımlamadan önce [ZIP’i indirip doğrula](README.tr.md#verify-zip) ve açılan paketten kurulumu yap.
+
+Sürüm paketini yerelde sınamak için güncel sürümü ve yeni bir çıktı dizinini kullan. Python ve Node.js 24 PATH üzerindeyken şu komutları depo kökünden çalıştır.
+
+```sh
+python -B terminal/ci/release.py package v0.6.1 terminal/.lab/release-check
+python -B terminal/ci/smoke_release.py terminal/.lab/release-check/heartwood-terminal.zip
+```
+
+Test, yalıtılmış bir dizinde kilit dosyasından kurulum yapar, iki dilde yardım ve çevrimdışı `doctor` çıktısını denetler. Eski profil geçişini, SDK anahtar veritabanı yerine işaret dosyası kullanılan sentetik metaveriyle sınar.
