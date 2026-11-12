@@ -2,6 +2,7 @@ import { HeartwoodError } from './failures.ts';
 import { MatrixFailure } from './matrix.ts';
 
 export type SendResult = {status: 'accepted'; eventId: string} | {status: 'uncertain'};
+export type PendingSendStatus = 'none' | 'busy' | 'uncertain' | 'retrying';
 type Submit<T> = (prepared: T) => Promise<string>;
 
 export class SendAttempts<T> {
@@ -9,6 +10,20 @@ export class SendAttempts<T> {
 
   pendingRooms(): string[] {
     return [...this.rooms].filter(([, slot]) => slot.prepared !== undefined).map(([room]) => room);
+  }
+
+  status(room: string): PendingSendStatus {
+    const slot = this.rooms.get(room);
+    if (!slot) return 'none';
+    if (slot.prepared === undefined) return 'busy';
+    return slot.busy ? 'retrying' : 'uncertain';
+  }
+
+  assertCanStart(room: string): void {
+    const slot = this.rooms.get(room);
+    if (slot?.busy) throw new HeartwoodError('sendInProgress');
+    if (slot) throw new HeartwoodError('pendingSendExists');
+    if (this.rooms.size >= 32) throw new HeartwoodError('pendingSendLimit');
   }
 
   prepareDiscard(room: string): () => void {
@@ -23,8 +38,7 @@ export class SendAttempts<T> {
   }
 
   async start(room: string, prepare: () => Promise<T>, submit: Submit<T>): Promise<SendResult> {
-    if (this.rooms.has(room)) throw new HeartwoodError('pendingSendExists');
-    if (this.rooms.size >= 32) throw new HeartwoodError('pendingSendLimit');
+    this.assertCanStart(room);
     const slot: {busy: boolean; prepared?: T} = {busy: true};
     this.rooms.set(room, slot);
     try {

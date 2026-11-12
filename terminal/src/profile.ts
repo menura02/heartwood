@@ -1,10 +1,39 @@
 import { HeartwoodError } from './failures.ts';
-import { lstat, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, readFile, realpath, rename, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join, relative } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { DeviceIdentity } from './policy.ts';
-import { acquireProfileLock } from './profile-lock.ts';
+import { acquireProfileLock, withProfileGate } from './profile-lock.ts';
+
+export const defaultProfileRoot = (): string => join(homedir(), '.heartwood');
+
+export function validProfileName(name: string): boolean {
+  return /^[a-z0-9][a-z0-9_-]{0,31}$/.test(name) &&
+    !(process.platform === 'win32' && /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$/.test(name));
+}
+
+export async function existingProfileRoot(root: string): Promise<string | undefined> {
+  const info = await lstat(root).catch((error: NodeJS.ErrnoException) => {
+    if (error.code !== 'ENOENT') throw error;
+  });
+  if (!info) return undefined;
+  if (!info.isDirectory()) throw new HeartwoodError('profileUnsafePath');
+  return realpath(root);
+}
+
+export async function existingProfileDirectory(root: string, name: string): Promise<string | undefined> {
+  if (!validProfileName(name)) throw new HeartwoodError('invalidProfileOrUsername');
+  const path = join(root, name);
+  const info = await lstat(path).catch((error: NodeJS.ErrnoException) => {
+    if (error.code !== 'ENOENT') throw error;
+  });
+  if (!info) return undefined;
+  if (!info.isDirectory()) throw new HeartwoodError('profileUnsafePath');
+  const resolved = await realpath(path);
+  if (relative(root, dirname(resolved)) || relative(path, resolved)) throw new HeartwoodError('profileUnsafePath');
+  return resolved;
+}
 
 interface Data {
   origin: string;
@@ -27,13 +56,22 @@ export class Profile {
     this.release = release;
   }
 
-  static async open(name: string, origin: string, username: string, root = join(homedir(), '.heartwood')): Promise<Profile> {
-    if (!/^[a-z0-9][a-z0-9_-]{0,31}$/.test(name) || !/^[a-z0-9._=-]{1,64}$/.test(username)) {
+  static async open(name: string, origin: string, username: string, root = defaultProfileRoot()): Promise<Profile> {
+    if (!validProfileName(name) || !/^[a-z0-9._=-]{1,64}$/.test(username)) {
       throw new HeartwoodError('invalidProfileOrUsername');
     }
-    const path = join(root, name);
-    await mkdir(path, { recursive: true, mode: 0o700 });
-    const release = await acquireProfileLock(path);
+    await mkdir(root, {recursive: true, mode: 0o700});
+    const canonical = await existingProfileRoot(root);
+    if (!canonical) throw new HeartwoodError('profileUnsafePath');
+    const {path, release} = await withProfileGate(canonical, async () => {
+      const created = join(canonical, name);
+      await mkdir(created, {mode: 0o700}).catch((error: NodeJS.ErrnoException) => {
+        if (error.code !== 'EEXIST') throw error;
+      });
+      const path = await existingProfileDirectory(canonical, name);
+      if (!path) throw new HeartwoodError('profileUnsafePath');
+      return {path, release: await acquireProfileLock(path)};
+    });
     try {
       let data: Data;
       try {

@@ -1,4 +1,5 @@
 import { HeartwoodError } from './failures.ts';
+import type { FailureCode } from './failures.ts';
 import { randomUUID } from 'node:crypto';
 import { access } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -7,9 +8,12 @@ import {
   RequestType, RoomId, StoreType, UserId,
 } from '@matrix-org/matrix-sdk-crypto-nodejs';
 import type { ToDeviceRequest } from '@matrix-org/matrix-sdk-crypto-nodejs';
-import { MatrixFailure, MatrixHttp, part } from './matrix.ts';
+import { MatrixFailure, MatrixHttp, MatrixTransportFailure, part } from './matrix.ts';
 import type { Login } from './matrix.ts';
-import { assertRoom, assertRoomSettings, assertTargets, assertTrusted, deviceCode, localUser, megolm, normalizeDeviceCode } from './policy.ts';
+import {
+  assertRoom, assertRoomMembership, assertRoomSettings, assertTargets, assertTrusted,
+  deviceCode, localUser, megolm, normalizeDeviceCode,
+} from './policy.ts';
 import type { DeviceIdentity, StateEvent } from './policy.ts';
 import { Profile } from './profile.ts';
 import type { ChatLine } from './chat-feed.ts';
@@ -17,8 +21,10 @@ import { readForwardPage, readHistoryPage } from './history.ts';
 import type { HistoryEvent, HistoryPage } from './history.ts';
 import { LiveTimeline } from './live-timeline.ts';
 import { SendAttempts } from './send-attempts.ts';
-import type { SendResult } from './send-attempts.ts';
+import type { PendingSendStatus, SendResult } from './send-attempts.ts';
 import type { Conversation } from './conversation-list.ts';
+import { SessionUnread } from './unread.ts';
+import type { JoinedRooms } from './unread.ts';
 
 interface Event { type: string; event_id?: string; sender?: string; content: Record<string, unknown> }
 interface SyncResponse {
@@ -28,7 +34,7 @@ interface SyncResponse {
   device_unused_fallback_key_types?: string[];
   to_device?: { events?: Event[] };
   rooms?: { invite?: Record<string, { invite_state: { events: StateEvent[] } }>;
-    leave?: Record<string, unknown>; join?: Record<string, unknown> };
+    leave?: Record<string, unknown>; join?: JoinedRooms };
 }
 interface DeviceKeys {
   user_id: string;
@@ -45,6 +51,26 @@ interface PreparedSend {
 
 export type OnboardingStep = 'accept' | 'wait' | 'verify' | 'changed' | 'ready' | 'invite' | 'unavailable';
 
+type PolicyCheck = 'pass' | 'fail' | 'unknown';
+export interface ChatStatus {
+  checkedAt: number;
+  connection: 'connected' | 'failed';
+  peer?: string;
+  device?: string;
+  verification: 'verified' | 'unverified' | 'changed' | 'unknown';
+  encryption: PolicyCheck;
+  membership: PolicyCheck;
+  sending: 'allowed' | 'blocked' | 'unknown';
+  pending: PendingSendStatus;
+  reason?: unknown;
+}
+
+const sendPolicyFailures = new Set<FailureCode>([
+  'roomIdRequired', 'invalidRoomSettings', 'invalidRoomMembership', 'invalidPeerId', 'peerBlocked',
+  'chatPeerChanged', 'noVerifiableDevice', 'tooManyDevices', 'invalidDeviceKeys', 'deviceNotVerified',
+  'trustedDeviceChanged', 'sendInProgress', 'pendingSendExists', 'pendingSendLimit',
+]);
+
 export class Heartwood {
   readonly identity: DeviceIdentity;
   readonly http: MatrixHttp;
@@ -53,6 +79,8 @@ export class Heartwood {
   private readonly invites: Map<string, string>;
   private readonly sends = new SendAttempts<PreparedSend>();
   private syncPending?: Promise<string>;
+  readonly unread = new SessionUnread();
+  private firstSync = true;
 
   private constructor(http: MatrixHttp, profile: Profile, machine: OlmMachine, session: Login) {
     this.http = http;
@@ -132,6 +160,9 @@ export class Heartwood {
     for (const room of Object.keys(response.rooms?.join ?? {})) this.invites.delete(room);
     // A later sync acknowledges to-device events. Persist only after the SDK stores their keys.
     await this.profile.save({sync: {cursor: response.next_batch, invites: [...this.invites]}});
+    this.unread.observe(response.rooms?.join ?? {}, this.identity.user, this.firstSync);
+    for (const room of Object.keys(response.rooms?.leave ?? {})) this.unread.forget(room);
+    this.firstSync = false;
     return response.next_batch;
   }
 
@@ -238,6 +269,32 @@ export class Heartwood {
   async status(room: string): Promise<{peer: string; verified: boolean}> {
     const peer = await this.roomPeer(room);
     return {peer, verified: await this.verifiedPeer(peer)};
+  }
+
+  async detailedStatus(room: string, expectedPeer?: string): Promise<ChatStatus> {
+    const report: ChatStatus = {
+      checkedAt: Date.now(), connection: 'failed', verification: 'unknown', encryption: 'unknown',
+      membership: 'unknown', sending: 'unknown', pending: this.sends.status(room),
+    };
+    try {
+      await this.sendDevices(room, expectedPeer, report);
+      this.sends.assertCanStart(room);
+      report.sending = 'allowed';
+    } catch (error) {
+      report.reason = error;
+      if (error instanceof MatrixTransportFailure ||
+          (error instanceof MatrixFailure && error.status >= 500) ||
+          (error instanceof DOMException && ['AbortError', 'TimeoutError'].includes(error.name))) {
+        report.connection = 'failed';
+      }
+      if ((error instanceof HeartwoodError && sendPolicyFailures.has(error.code)) ||
+          (error instanceof MatrixFailure && [401, 403, 404].includes(error.status))) {
+        report.sending = 'blocked';
+      }
+    }
+    report.checkedAt = Date.now();
+    report.pending = this.sends.status(room);
+    return report;
   }
 
   private async verifiedPeer(peer: string): Promise<boolean> {
@@ -365,13 +422,48 @@ export class Heartwood {
     }, prepared => this.submitSend(prepared));
   }
 
-  private async sendDevices(room: string, expectedPeer?: string): Promise<[DeviceIdentity, DeviceIdentity]> {
+  private async sendDevices(room: string, expectedPeer?: string, report?: ChatStatus): Promise<[DeviceIdentity, DeviceIdentity]> {
     await this.sync();
-    const peer = await this.roomPeer(room);
+    if (report) report.connection = 'connected';
+    const state = await this.roomState(room);
+    let settingsError: unknown;
+    try {
+      assertRoomSettings(state);
+      if (report) report.encryption = 'pass';
+    } catch (error) {
+      if (!report) throw error;
+      if (error instanceof HeartwoodError && error.code === 'invalidRoomSettings') report.encryption = 'fail';
+      settingsError = error;
+    }
+    let peer: string;
+    try {
+      peer = assertRoomMembership(state, this.identity.user);
+      if (report) {
+        report.membership = 'pass';
+        report.peer = peer;
+      }
+    } catch (error) {
+      if (report && error instanceof HeartwoodError && ['invalidRoomMembership', 'invalidPeerId'].includes(error.code)) {
+        report.membership = 'fail';
+      }
+      throw settingsError ?? error;
+    }
+    if (settingsError) throw settingsError;
+    this.activePeer(peer);
     if (expectedPeer !== undefined && peer !== expectedPeer) throw new HeartwoodError('chatPeerChanged');
     const [own, recipient] = await this.devices([this.identity.user, peer]);
+    if (report) report.device = recipient.device;
     assertTrusted(this.identity, own);
-    assertTrusted(this.profile.data.pins[peer], recipient);
+    try {
+      assertTrusted(this.profile.data.pins[peer], recipient);
+      if (report) report.verification = 'verified';
+    } catch (error) {
+      if (report && error instanceof HeartwoodError) {
+        if (error.code === 'deviceNotVerified') report.verification = 'unverified';
+        if (error.code === 'trustedDeviceChanged') report.verification = 'changed';
+      }
+      throw error;
+    }
     return [own, recipient];
   }
 
@@ -429,6 +521,7 @@ export class Heartwood {
     let catchingUp = false;
     return {
       initial,
+      peer,
       get catchingUp() { return catchingUp; },
       send: (message: string) => this.send(room, message, peer),
       retry: () => this.retrySend(room, peer),
@@ -445,7 +538,11 @@ export class Heartwood {
   private async decode(room: string, peer: string, event: HistoryEvent): Promise<ChatLine | undefined> {
     if (event.type !== 'm.room.encrypted' || typeof event.event_id !== 'string' ||
         (event.sender !== peer && event.sender !== this.identity.user)) return;
-    const line = {id: event.event_id, sender: event.sender};
+    const timestamp = event.origin_server_ts;
+    const line: ChatLine = {id: event.event_id, sender: event.sender};
+    if (typeof timestamp === 'number' && Number.isFinite(timestamp) && Math.abs(timestamp) <= 8.64e15) {
+      line.timestamp = timestamp;
+    }
     const expected = event.sender === peer ? this.profile.data.pins[peer] : this.identity;
     try {
       const clear = await this.machine.decryptRoomEvent(JSON.stringify(event), new RoomId(room));
