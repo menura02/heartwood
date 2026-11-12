@@ -10,4 +10,6 @@
 
 Gerçek kimlik bilgilerini, belirteçleri, anahtarları, profilleri ve özel mesajları Git’e, günlüklere veya hata raporlarına ekleme. Geçici laboratuvar kısa ömürlü kayıt belirtecini yerelde gösterir.
 
+Arama metni, sonuçlar, tekrar engelleme ve okunmamış durumu bellekte tutulur. Sohbetten çıkınca arama referansları bırakılır. JavaScript belleğin fiziksel olarak silinmesini garanti etmez. Yerel kaldırma komutu doğrulanmış profil dosyalarını normal dosya sistemi işlemleriyle siler. İşlem kesilirse elle inceleme için profil kökünde yalıtılmış bir `.removed-*` dizini kalabilir.
+
 [Kurulum ve kullanım](README.tr.md) · [Mimari](ARCHITECTURE.tr.md)

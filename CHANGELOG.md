@@ -2,6 +2,12 @@
 
 # Changelog
 
+## 0.6.0
+
+- Added contextual Tab completion and help, history inside live chat, bounded local search and session unread indicators.
+- Added offline local profile inspection and confirmed removal, plus an expanded status report that shares send policy checks.
+- To send text beginning with a slash, use `/send MESSAGE` in chat.
+
 ## 0.5.0
 
 ### Added

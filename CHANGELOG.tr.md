@@ -2,6 +2,12 @@
 
 # Değişiklik kaydı
 
+## 0.6.0
+
+- Bağlamsal Tab tamamlama ve yardım, canlı sohbet içinde geçmiş, sınırlı yerel arama ve oturum içi okunmamış göstergesi eklendi.
+- Çevrimdışı yerel profil inceleme ve onaylı kaldırma ile gönderim politikası denetimlerini paylaşan ayrıntılı durum raporu eklendi.
+- Eğik çizgiyle başlayan metni göndermek için sohbette `/send MESAJ` kullan.
+
 ## 0.5.0
 
 ### Eklenenler

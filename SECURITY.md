@@ -10,4 +10,6 @@
 
 Keep real credentials, tokens, keys, profiles and private messages out of Git, logs and issue reports. The disposable lab displays its short-lived registration token locally.
 
+Search text, results, display deduplication, and unread tracking are held in memory. Leaving a chat releases its search references. JavaScript offers no guarantee of physical memory erasure. The local removal command deletes verified profile files through normal filesystem operations. An interruption during removal can leave an isolated `.removed-*` directory under the profile root for manual inspection.
+
 [Setup and usage](README.md) · [Architecture](ARCHITECTURE.md)

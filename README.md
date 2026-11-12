@@ -51,6 +51,17 @@ From `terminal/`, run `npm start -- doctor` for local checks, or `npm start -- d
 
 Run `npm start -- onboard` for prompts that collect the account mode, server, profile and username before the normal secret prompts. Press Ctrl+C to cancel. Use `/guide` (or `/rehber`) from the main prompt at any time to see the next step. You can leave with `/exit` while an invitation is pending and return with your usual login.
 
+## Chat commands and local profiles
+
+- Type a command prefix such as `/hist` and press Tab. Matching commands depend on the current prompt. Tab offers command names only. Use `/help` in either prompt.
+- In an open chat, use `/history` and then `/older` to read without leaving the live stream. History and live events have separate headings. The main prompt still accepts `/history !ROOM` and `/older !ROOM`.
+- Use `/search hello`, `/search-next` and `/search-prev` in an open chat. Search matches literal text in the last 200 eligible messages displayed during this visit, up to 4,000 bytes each. Pages have ten results with UTC times when available. Case matching uses the selected interface language, including Turkish dotted and dotless I. Rerun the search after loading more history or after results leave memory.
+- `/conversations` refreshes the current sync and shows a **new activity** marker for observed encrypted events from the peer that have yet to be displayed as readable. Startup and join backfill, your own messages, and recent duplicates are excluded. A bounded indicator can miss events when the server returns a limited sync. It resets on restart and sends no read receipt.
+- Use `/status` in an open chat or `/status !ROOM` at the main prompt. It reports the check time, connection, peer and device, verification, room policy, send availability and pending sends separately. Heartwood checks the policy again when sending.
+- To send text that starts with a slash, type `/send MESSAGE` in chat. For example, `/send /example` sends the literal text `/example`.
+
+From `terminal/`, run `npm start -- profiles list`, `npm start -- profiles show alice-demo`, or `npm start -- profiles remove alice-demo`. Removal requires typing the exact profile name and rejects active or unsafe profiles. Removing the local keys can make older messages unreadable. The server account and messages remain.
+
 ## Run the automated demo
 
 In Linux or WSL with Linux Node.js, set `HEARTWOOD_SYNAPSE_PYTHON` as above. From `terminal/`, run `node lab/demo.ts` or `node lab/demo.ts --lang tr`. The command starts its own disposable lab, drives two real terminals through an encrypted chat and a controlled connection interruption, prints selected terminal output, and shuts down its resources. It uses fictional identities and compares their codes in the harness. Real users compare their codes over a trusted second channel.
