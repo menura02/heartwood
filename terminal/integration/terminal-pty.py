@@ -20,7 +20,7 @@ else:
 
 
 class Terminal:
-    def __init__(self, node, home, account, origin, turkish=False, guided=False):
+    def __init__(self, node, home, account, origin, turkish=False, guided=False, cli_args=None):
         self.output = bytearray()
         self.offset = 0
         self.profile = home / ".heartwood" / account
@@ -35,6 +35,8 @@ class Terminal:
         command = [node, "src/cli.ts", *startup, account, origin, account]
         if guided:
             command = [node, "src/cli.ts", "--lang", "tr" if turkish else "en", "onboard"]
+        if cli_args is not None:
+            command = [node, "src/cli.ts", *cli_args]
         if sys.platform == "win32":
             self.child = ConPty(command, {**environment, "USERPROFILE": str(home)})
         else:
@@ -117,7 +119,7 @@ class Terminal:
 
 
 @contextlib.contextmanager
-def relay(origin):
+def relay(origin, history=None):
     target = urllib.parse.urlsplit(origin)
     fail_sync = threading.Event()
     hold_sync = threading.Event()
@@ -129,6 +131,12 @@ def relay(origin):
             pass
 
         def forward(self):
+            if history and "/messages?" in self.path and "dir=b" in self.path and history[0].is_set():
+                history[0].clear()
+                history[1].set()
+                if not history[2].wait(10):
+                    self.send_error(504)
+                    return
             if self.path.startswith("/_matrix/client/v3/sync?"):
                 if fail_sync.is_set():
                     fail_sync.clear()
@@ -151,7 +159,10 @@ def relay(origin):
                 self.send_header("Content-Type", upstream.getheader("Content-Type", "application/json"))
                 self.send_header("Content-Length", str(len(payload)))
                 self.end_headers()
-                self.wfile.write(payload)
+                try:
+                    self.wfile.write(payload)
+                except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+                    pass  # A chat may close while a deliberately delayed response is in flight.
             finally:
                 connection.close()
 
@@ -169,7 +180,9 @@ def relay(origin):
 
 
 def scenario(node, origin, root, token):
-    with relay(origin) as (relayed, fail_sync, hold_sync, request_held), contextlib.ExitStack() as stack:
+    arm_history, history_requested, release_history = (threading.Event() for _ in range(3))
+    with relay(origin, (arm_history, history_requested, release_history)) as (
+            relayed, fail_sync, hold_sync, request_held), contextlib.ExitStack() as stack:
         home = pathlib.Path(root) / "pty-home"
         alice = Terminal(node, home, "ptyalice", relayed)
         stack.callback(alice.close)
@@ -177,7 +190,7 @@ def scenario(node, origin, root, token):
         stack.callback(bob.close)
         for terminal, name in [(alice, "alice"), (bob, "bob")]:
             terminal.register("pty-password-" + name, token, "pty-passphrase-" + name)
-            terminal.command("/kimlik" if terminal is alice else "/identity")
+            terminal.type("/iden\t\r" if terminal is alice else "/kim\t\r")
             terminal.expect_ui("Account @pty", "Hesap @pty")
             terminal.code = terminal.expect(rb"((?:[0-9a-f]{8} ){7}[0-9a-f]{8})")[1].decode()
             terminal.expect("heartwood> ")
@@ -220,6 +233,57 @@ def scenario(node, origin, root, token):
         alice.expect(alice.chat_prompt)
         bob.expect("@ptyalice:localhost  " + draft)
 
+        alice.type("/s\t\t")
+        alice.expect("/search-next")
+        alice.type("\x15")
+        alice.command("/status")
+        alice.expect("New send: allowed at check time")
+        alice.expect(alice.chat_prompt)
+
+        arm_history.set()
+        alice.command("/history")
+        assert history_requested.wait(5), "No backward history request to delay"
+        alice.type("History draft")
+        bob.command("Yeni geçmiş çığ")
+        bob.expect("Şifreli olay sunucu tarafından kabul edildi.")
+        bob.expect(bob.chat_prompt)
+        alice.expect("@ptybob:localhost  Yeni geçmiş çığ")
+        alice.expect(alice.chat_prompt + "History draft")
+        release_history.set()
+        alice.expect("History page 1")
+        alice.expect("Events on this page have already been displayed.")
+        alice.expect(alice.chat_prompt + "History draft")
+        alice.type("\x15")
+        alice.command("/search TÜRKÇE")
+        alice.expect("Search results")
+        alice.expect("@ptybob:localhost  Türkçe bildirim")
+        alice.expect(alice.chat_prompt)
+
+        history_requested.clear()
+        release_history.clear()
+        arm_history.set()
+        alice.command("/history")
+        assert history_requested.wait(5), "No backward history request to cancel"
+        alice.command("/back")
+        alice.expect("heartwood> ")
+        release_history.set()
+        bob.command("While Alice is away")
+        bob.expect("Şifreli olay sunucu tarafından kabul edildi.")
+        alice.command("/conversations")
+        alice.expect("new activity")
+        alice.expect("heartwood> ")
+        alice.command("/chat " + room)
+        alice.expect("@ptybob:localhost  While Alice is away")
+        alice.expect(alice.chat_prompt)
+        alice.command("/back")
+        alice.expect("heartwood> ")
+        start = alice.offset
+        alice.command("/conversations")
+        end = alice.expect("heartwood> ").start()
+        assert b"new activity" not in alice.output[start:end], "Displayed message stayed unread"
+        alice.command("/chat " + room)
+        alice.expect(alice.chat_prompt)
+
         alice.type("\x1b[200~")
         alice.type("YAPISTIRMA-MESAJI\n/geri\n/cikis")
         alice.type("\x1b[201~")
@@ -239,9 +303,16 @@ def scenario(node, origin, root, token):
         bob.expect("heartwood> ")
         bob.command("/cikis")
         bob.assert_exit()
+        remove = Terminal(node, home, "ptyalice", relayed, cli_args=["profiles", "remove", "ptyalice"])
+        stack.callback(remove.close)
+        remove.expect("Type the exact profile name ptyalice to remove it:")
+        remove.command("")
+        remove.expect("Profile removal cancelled.")
+        remove.assert_exit()
+        assert remove.profile.exists(), "Cancelled removal deleted the profile"
 
 
 if __name__ == "__main__":
     scenario(sys.argv[1], sys.argv[2], sys.argv[3], os.environ["HEARTWOOD_TEST_REGISTRATION_TOKEN"])
     terminal = "Windows ConPTY" if sys.platform == "win32" else "Linux PTY"
-    print(f"{terminal}: both locales, aliases, secrets, redraw, Unicode, reconnect, history and exit passed.")
+    print(f"{terminal}: completion, secrets, live history, search, unread, status, profile cancellation and exit passed.")
