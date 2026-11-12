@@ -17,9 +17,9 @@ function rpc<T>(worker: ChildProcess, op: string, args: Record<string, unknown> 
       worker.off('message', replied);
       reject(new Error(`Fixture process exited during ${op} (${code}).`));
     };
-    const replied = (reply: { value?: T; error?: string; code?: string }) => {
+    const replied = (reply: { value?: T; error?: string; code?: string; status?: number }) => {
       worker.off('exit', exited);
-      if (reply.error) reject(Object.assign(new Error(reply.error), {code: reply.code}));
+      if (reply.error) reject(Object.assign(new Error(reply.error), {code: reply.code, status: reply.status}));
       else resolve(reply.value as T);
     };
     worker.once('message', replied);
@@ -87,6 +87,7 @@ test('Synapse: encrypted chat, offline delivery, paginated history and access bo
   await assert.rejects(rpc(outsider.worker, 'history', {room}));
   await assert.rejects(rpc(alice.worker, 'send', {room, text: 'unverified'}), {code: 'deviceNotVerified'});
   assert.deepEqual(await rpc(alice.worker, 'status', {room}), {peer: bob.identity.user, verified: false});
+  assert.equal(await rpc(alice.worker, 'guide'), 'verify');
   await assert.rejects(rpc(alice.worker, 'verify', {peer: bob.identity.user, text: '0'.repeat(64)}), {code: 'deviceCodeMismatch'});
   const bobCode = deviceCode(bob.identity);
   await rpc(alice.worker, 'verify', {peer: bob.identity.user, text: bobCode});
@@ -128,11 +129,12 @@ test('Synapse: encrypted chat, offline delivery, paginated history and access bo
   type EventLine = Line & {id: string};
   const initialLive = await rpc<EventLine[]>(bob.worker, 'live-open', {room});
   assert.equal(initialLive.filter(line => line.body === lostMessage).length, 1);
-  await assert.rejects(rpc(bob.worker, 'live-offline', {room}), /network interruption/);
+  await assert.rejects(rpc(bob.worker, 'live-offline'), {code: 'matrixTransport'});
 
   const fixturePrefix = `history-${prefix}-`;
   const messages = Array.from({length: 120}, (_, index) => fixturePrefix + index);
   for (const text of messages) await rpc(alice.worker, 'send', {room, text});
+  await assert.rejects(rpc(bob.worker, 'live-offline'), {code: 'matrixTransport'});
   const liveLines: EventLine[] = [];
   for (let count = 0; count < 8 && liveLines.length < messages.length; count++) {
     liveLines.push(...await rpc<EventLine[]>(bob.worker, 'live-refresh'));
@@ -179,17 +181,29 @@ test('Synapse: encrypted chat, offline delivery, paginated history and access bo
     assert.ok(!log.includes(fixturePrefix), 'pagination fixture plaintext absent in selected server log');
     assert.ok(!log.includes(lostMessage), 'retry fixture plaintext absent in selected server log');
   }
-  await open('bob-extra', false, passphrase, 'bob');
+  const replacement = await open('bob-replacement', false, passphrase, 'bob');
   await assert.rejects(rpc(alice.worker, 'send', {room, text: 'extra device'}), {code: 'tooManyDevices'});
-  await close('bob-extra');
-  await rpc(bob.worker, 'block', {peer: alice.identity.user});
-  assert.ok(!(await rpc<string[]>(bob.worker, 'rooms')).includes(room));
-  await assert.rejects(rpc(bob.worker, 'history-page', {room, before: firstCursor}));
-  await assert.rejects(rpc(bob.worker, 'live-refresh', {room}));
-  await assert.rejects(rpc(bob.worker, 'send-live', {text: 'blocked-live'}));
-  assert.deepEqual(await rpc(bob.worker, 'conversations'), {rooms: [], unavailable: 0});
-  await assert.rejects(rpc(bob.worker, 'invite', {peer: alice.identity.user}), {code: 'peerBlocked'});
-  await assert.rejects(rpc(alice.worker, 'send', {room, text: 'blocked'}));
+  await rpc(bob.worker, 'logout');
+  await assert.rejects(rpc(bob.worker, 'live-refresh'), {status: 401, code: 'M_UNKNOWN_TOKEN'});
+  await close('bob');
+  assert.equal(replacement.identity.user, bob.identity.user);
+  assert.notEqual(deviceCode(replacement.identity), bobCode);
+  assert.deepEqual(await rpc(alice.worker, 'status', {room}), {peer: bob.identity.user, verified: false});
+  assert.equal(await rpc(alice.worker, 'guide'), 'changed');
+  await assert.rejects(rpc(alice.worker, 'send', {room, text: 'replaced device'}), {code: 'trustedDeviceChanged'});
+  await assert.rejects(rpc(alice.worker, 'verify', {peer: bob.identity.user, text: deviceCode(replacement.identity)}),
+    {code: 'trustedDeviceChanged'});
+
+  await rpc(replacement.worker, 'verify', {peer: alice.identity.user, text: deviceCode(alice.identity)});
+  await rpc(replacement.worker, 'live-open', {room});
+  await rpc(replacement.worker, 'block', {peer: alice.identity.user});
+  assert.ok(!(await rpc<string[]>(replacement.worker, 'rooms')).includes(room));
+  await assert.rejects(rpc(replacement.worker, 'history-page', {room, before: firstCursor}));
+  await assert.rejects(rpc(replacement.worker, 'live-refresh'));
+  await assert.rejects(rpc(replacement.worker, 'send-live', {text: 'blocked-live'}));
+  assert.deepEqual(await rpc(replacement.worker, 'conversations'), {rooms: [], unavailable: 0});
+  await assert.rejects(rpc(replacement.worker, 'invite', {peer: alice.identity.user}), {code: 'peerBlocked'});
+  await assert.rejects(rpc(alice.worker, 'send', {room, text: 'blocked'}), {code: 'invalidRoomMembership'});
   const blocked = await rpc<string>(alice.worker, 'invite', {peer: bob.identity.user});
-  assert.ok(!(await rpc<Invite[]>(bob.worker, 'pending')).some(invite => invite.room === blocked));
+  assert.ok(!(await rpc<Invite[]>(replacement.worker, 'pending')).some(invite => invite.room === blocked));
 });

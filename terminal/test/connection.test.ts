@@ -14,8 +14,48 @@ test('temporary failures use bounded jitter and success resets the next delay', 
   assert.equal(recovery.fail(failure).delay, 500);
   for (let i = 0; i < 4; i++) assert.ok(recovery.fail(failure).delay! <= 8000);
   assert.equal(recovery.fail(failure).delay, undefined);
-  assert.equal(recovery.fail(new MatrixFailure(401, 'M_UNKNOWN_TOKEN')).delay, undefined);
   assert.equal(recovery.fail(new Error('invalid Matrix response')).delay, undefined);
+});
+
+test('temporary Matrix HTTP failures get five retries before automatic reads pause', async t => {
+  for (const status of [502, 503, 504]) {
+    await t.test(`HTTP ${status}`, async context => {
+      context.mock.method(globalThis, 'fetch', async () => Response.json({}, {status}));
+      const http = new MatrixHttp('http://127.0.0.1:18008');
+      const recovery = new LiveRecovery(() => 1);
+      const delays: number[] = [];
+      for (let attempt = 0; attempt < 6; attempt++) {
+        await assert.rejects(http.request('GET', 'sync'), (error: unknown) => {
+          assert.ok(error instanceof MatrixFailure);
+          assert.equal(error.status, status);
+          const update = recovery.fail(error);
+          if (attempt === 0) assert.equal(update.status, 'reconnecting');
+          if (update.delay !== undefined) delays.push(update.delay);
+          if (attempt === 5) assert.deepEqual(update, {status: 'paused'});
+          return true;
+        });
+      }
+      assert.deepEqual(delays, [625, 1250, 2500, 5000, 8000]);
+    });
+  }
+});
+
+test('an invalid or expired access token immediately pauses automatic reads', async t => {
+  for (const softLogout of [false, true]) {
+    await t.test(`soft logout ${softLogout}`, async context => {
+      context.mock.method(globalThis, 'fetch', async () =>
+        Response.json({errcode: 'M_UNKNOWN_TOKEN', soft_logout: softLogout}, {status: 401}));
+      const http = new MatrixHttp('http://127.0.0.1:18008');
+      const recovery = new LiveRecovery(() => assert.fail('Authorization failures must not schedule retries'));
+      await assert.rejects(http.request('GET', 'sync'), (error: unknown) => {
+        assert.ok(error instanceof MatrixFailure);
+        assert.equal(error.status, 401);
+        assert.equal(error.code, 'M_UNKNOWN_TOKEN');
+        assert.deepEqual(recovery.fail(error), {status: 'paused'});
+        return true;
+      });
+    });
+  }
 });
 
 test('HTTP cancellation reaches the active fetch and is distinct from a network failure', async t => {
@@ -39,7 +79,12 @@ test('a truncated authorization response still pauses automatic reads', async t 
     async json() { throw new TypeError('truncated response'); },
   }));
   const http = new MatrixHttp('http://127.0.0.1:18008');
-  await assert.rejects(http.request('GET', 'sync'), {status: 403});
+  await assert.rejects(http.request('GET', 'sync'), (error: unknown) => {
+    assert.ok(error instanceof MatrixFailure);
+    assert.equal(error.status, 403);
+    assert.deepEqual(new LiveRecovery().fail(error), {status: 'paused'});
+    return true;
+  });
 });
 
 test('an unrecognized Matrix error code is retained for callers and hidden from its message', async t => {
