@@ -1,6 +1,6 @@
 import { Heartwood } from '../src/client.ts';
 import { HeartwoodError } from '../src/failures.ts';
-import { MatrixHttp, login, part, register } from '../src/matrix.ts';
+import { MatrixFailure, MatrixHttp, login, part, register } from '../src/matrix.ts';
 import { Profile } from '../src/profile.ts';
 
 interface Command { op: string; room?: string; peer?: string; text?: string; before?: string }
@@ -12,7 +12,19 @@ interface Init {
 let profile: Profile | undefined;
 let client: Heartwood | undefined;
 let live: Awaited<ReturnType<Heartwood['openLive']>> | undefined;
-let lostSend: {path: string; body: unknown; eventId: string} | undefined;
+let lostSend: {url: string; body: RequestInit['body']; eventId: string} | undefined;
+
+const fetchFromServer = globalThis.fetch;
+
+async function withFetch<T>(intercept: typeof fetch, action: () => Promise<T>): Promise<T> {
+  globalThis.fetch = intercept;
+  try { return await action(); }
+  finally { globalThis.fetch = fetchFromServer; }
+}
+
+function isEncryptedSend(url: string, init?: RequestInit): boolean {
+  return init?.method === 'PUT' && url.includes('/send/m.room.encrypted/');
+}
 
 async function run(command: Command & Partial<Init>): Promise<unknown> {
   if (command.op === 'open') {
@@ -25,6 +37,7 @@ async function run(command: Command & Partial<Init>): Promise<unknown> {
     return client.identity;
   }
   if (!client) throw new Error('Fixture session not open');
+  const session = client;
   const {room = '', peer = '', text = ''} = command;
   switch (command.op) {
     case 'invite': return client.invite(peer);
@@ -41,48 +54,44 @@ async function run(command: Command & Partial<Init>): Promise<unknown> {
       return live.send(text);
     }
     case 'send-losing-response': {
-      const http = client.http;
-      const request = http.request.bind(http);
-      http.request = async <T>(method: string, path: string, body?: unknown): Promise<T> => {
-        const result = await request<T>(method, path, body);
-        if (method === 'PUT' && path.includes('/send/m.room.encrypted/')) {
-          lostSend = {path, body, eventId: (result as {event_id: string}).event_id};
-          throw new Error('Fixture dropped an accepted response');
+      return withFetch(async (input, init) => {
+        const response = await fetchFromServer(input, init);
+        const url = String(input);
+        if (isEncryptedSend(url, init) && response.ok) {
+          const {event_id} = await response.json() as {event_id: string};
+          lostSend = {url, body: init?.body, eventId: event_id};
+          throw new TypeError('Fixture dropped an accepted response');
         }
-        return result;
-      };
-      try { return await client.send(room, text); }
-      finally { http.request = request; }
+        return response;
+      }, () => session.send(room, text));
     }
     case 'retry-send': {
       if (!lostSend) throw new Error('Missing lost response fixture');
-      const http = client.http;
-      const request = http.request.bind(http);
       const original = lostSend;
       let matched = false;
-      http.request = async <T>(method: string, path: string, body?: unknown): Promise<T> => {
-        if (method === 'PUT' && path.includes('/send/m.room.encrypted/')) {
-          matched = path === original.path && JSON.stringify(body) === JSON.stringify(original.body);
+      const result = await withFetch(async (input, init) => {
+        const url = String(input);
+        if (isEncryptedSend(url, init)) {
+          matched = url === original.url && init?.body === original.body;
         }
-        return request<T>(method, path, body);
-      };
-      try { return {result: await client.retrySend(room), matched, originalEvent: original.eventId}; }
-      finally { http.request = request; }
+        return fetchFromServer(input, init);
+      }, () => session.retrySend(room));
+      return {result, matched, originalEvent: original.eventId};
     }
     case 'live-open':
       live = await client.openLive(room);
       return live.initial;
     case 'live-refresh': return live?.refresh();
     case 'live-offline': {
-      const http = client.http;
-      const request = http.request.bind(http);
-      http.request = async <T>(method: string, path: string, body?: unknown): Promise<T> => {
-        if (path.startsWith('sync?')) throw new Error('Fixture network interruption');
-        return request<T>(method, path, body);
-      };
-      try { return await live?.refresh(); }
-      finally { http.request = request; }
+      const chat = live;
+      if (!chat) throw new Error('Live fixture not open');
+      return withFetch(async (input, init) => {
+        if (new URL(String(input)).pathname.endsWith('/sync')) throw new TypeError('Fixture network interruption');
+        return fetchFromServer(input, init);
+      }, chat.refresh);
     }
+    case 'logout': return client.http.request('POST', 'logout', {});
+    case 'guide': return client.onboardingStep();
     case 'verify': return client.verify(peer, text);
     case 'history': return client.history(room);
     case 'history-page': return client.historyPage(room, command.before);
@@ -112,6 +121,8 @@ process.on('message', async (command: Command) => {
   }
   try { process.send?.({ok: true, value: await run(command)}); }
   catch (error) {
-    process.send?.({error: (error as Error).message, code: error instanceof HeartwoodError ? error.code : undefined});
+    process.send?.({error: (error as Error).message,
+      code: error instanceof HeartwoodError || error instanceof MatrixFailure ? error.code : undefined,
+      status: error instanceof MatrixFailure ? error.status : undefined});
   }
 });

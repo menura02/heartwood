@@ -20,6 +20,7 @@ export class TerminalInput extends Transform {
   private pending = '';
   private paste?: string;
   private oversized = false;
+  complete?: () => void;
 
   constructor(interrupt: () => void, rejectPaste: () => void) {
     super();
@@ -49,11 +50,17 @@ export class TerminalInput extends Transform {
 
   private forward(text: string): void {
     const interrupt = text.indexOf('\x03');
-    if (interrupt === -1) this.push(text);
-    else {
-      this.push(text.slice(0, interrupt));
-      this.interrupt();
+    const input = interrupt === -1 ? text : text.slice(0, interrupt);
+    if (this.complete && input.includes('\t')) {
+      const parts = input.split('\t');
+      for (let i = 0; i < parts.length; i++) {
+        if (i > 0) this.complete?.();
+        if (parts[i]) this.push(parts[i]);
+      }
+    } else if (input) {
+      this.push(input);
     }
+    if (interrupt !== -1) this.interrupt();
   }
 
   private forwardPending(): void {

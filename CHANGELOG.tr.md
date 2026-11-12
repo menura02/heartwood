@@ -2,6 +2,21 @@
 
 # Değişiklik kaydı
 
+## 0.6.0
+
+- Bağlamsal Tab tamamlama ve yardım, canlı sohbet içinde geçmiş, sınırlı yerel arama ve oturum içi okunmamış göstergesi eklendi.
+- Çevrimdışı yerel profil inceleme ve onaylı kaldırma ile gönderim politikası denetimlerini paylaşan ayrıntılı durum raporu eklendi.
+- Eğik çizgiyle başlayan metni göndermek için sohbette `/send MESAJ` kullan.
+
+## 0.5.0
+
+### Eklenenler
+
+- Çalışma ortamını, yerel kripto bağlayıcısını, profil dizini erişimini ve isteğe bağlı Matrix bağlantısını `doctor` ile denetle.
+- Yönlendirmeli kayıt veya giriş için `onboard`, sohbete hazırlıkta sonraki adım için `/guide` kullan.
+- Şifreli sohbet ve yeniden bağlanma için Linux veya WSL’de iki hesaplı geçici demoyu çalıştır.
+- Windows ConPTY kapsamı eklendi. Geçici hatalar, süresi dolmuş belirteçler ve değişen cihaz anahtarları için testler genişletildi.
+
 ## 0.4.0
 
 ### Eklenenler

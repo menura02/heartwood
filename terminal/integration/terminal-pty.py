@@ -3,23 +3,24 @@ import http.client
 import http.server
 import os
 import pathlib
-import pty
 import re
-import select
 import socket
 import subprocess
 import sys
-import termios
 import threading
 import time
 import urllib.parse
 
+if sys.platform == "win32":
+    from conpty import ConPty
+else:
+    import pty
+    import select
+    import termios
+
 
 class Terminal:
-    def __init__(self, node, home, account, origin, turkish=False):
-        self.master, self.slave = pty.openpty()
-        termios.tcsetwinsize(self.slave, (30, 100))
-        self.flags = termios.tcgetattr(self.slave)[3]
+    def __init__(self, node, home, account, origin, turkish=False, guided=False, cli_args=None):
         self.output = bytearray()
         self.offset = 0
         self.profile = home / ".heartwood" / account
@@ -27,21 +28,40 @@ class Terminal:
         self.chat_prompt = "sohbet> " if turkish else "chat> "
         environment = {**os.environ, "HOME": str(home), "TERM": "xterm-256color"}
         environment.pop("HEARTWOOD_LANG", None)
+        environment.pop("HEARTWOOD_TEST_REGISTRATION_TOKEN", None)
         startup = ["--lang", "tr", "kayit"] if turkish else ["register"]
         if turkish:
             environment["HEARTWOOD_LANG"] = "en"
-        self.child = subprocess.Popen(
-            [node, "src/cli.ts", *startup, account, origin, account],
-            stdin=self.slave, stdout=self.slave, stderr=self.slave,
-            env=environment,
-        )
+        command = [node, "src/cli.ts", *startup, account, origin, account]
+        if guided:
+            command = [node, "src/cli.ts", "--lang", "tr" if turkish else "en", "onboard"]
+        if cli_args is not None:
+            command = [node, "src/cli.ts", *cli_args]
+        if sys.platform == "win32":
+            self.child = ConPty(command, {**environment, "USERPROFILE": str(home)})
+        else:
+            self.master, self.slave = pty.openpty()
+            try:
+                termios.tcsetwinsize(self.slave, (30, 100))
+                self.flags = termios.tcgetattr(self.slave)[3]
+                self.child = subprocess.Popen(command, stdin=self.slave, stdout=self.slave, stderr=self.slave,
+                                              env=environment)
+            except BaseException:
+                os.close(self.master)
+                os.close(self.slave)
+                raise
 
     def drain(self, timeout):
-        readable, _, _ = select.select([self.master], [], [], timeout)
-        if readable:
-            self.output.extend(os.read(self.master, 16384))
+        if sys.platform == "win32":
+            self.output.extend(self.child.read(timeout))
+        else:
+            readable, _, _ = select.select([self.master], [], [], timeout)
+            if readable:
+                self.output.extend(os.read(self.master, 16384))
 
     def expect(self, value, timeout=12):
+        if sys.platform == "win32" and isinstance(value, str):
+            value = value.rstrip(" ")
         pattern = re.compile(re.escape(value.encode()) if isinstance(value, str) else value)
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
@@ -56,7 +76,10 @@ class Terminal:
         raise AssertionError(f"Terminal did not reach {label} (exit {self.child.poll()})")
 
     def type(self, value):
-        os.write(self.master, value.encode())
+        if sys.platform == "win32":
+            self.child.write(value.encode())
+        else:
+            os.write(self.master, value.encode())
 
     def command(self, value):
         self.type(value + "\r")
@@ -79,11 +102,15 @@ class Terminal:
 
     def assert_exit(self):
         assert self.child.wait(timeout=5) == 0, "CLI exited with an error"
-        mask = termios.ECHO | termios.ICANON | termios.ISIG
-        assert termios.tcgetattr(self.slave)[3] & mask == self.flags & mask, "TTY mode not restored"
+        if sys.platform != "win32":
+            mask = termios.ECHO | termios.ICANON | termios.ISIG
+            assert termios.tcgetattr(self.slave)[3] & mask == self.flags & mask, "TTY mode not restored"
         assert not (self.profile / "in-use").exists(), "Profile lock remained"
 
     def close(self):
+        if sys.platform == "win32":
+            self.child.close()
+            return
         if self.child.poll() is None:
             self.child.kill()
             self.child.wait(timeout=5)
@@ -92,7 +119,7 @@ class Terminal:
 
 
 @contextlib.contextmanager
-def relay(origin):
+def relay(origin, history=None):
     target = urllib.parse.urlsplit(origin)
     fail_sync = threading.Event()
     hold_sync = threading.Event()
@@ -104,6 +131,12 @@ def relay(origin):
             pass
 
         def forward(self):
+            if history and "/messages?" in self.path and "dir=b" in self.path and history[0].is_set():
+                history[0].clear()
+                history[1].set()
+                if not history[2].wait(10):
+                    self.send_error(504)
+                    return
             if self.path.startswith("/_matrix/client/v3/sync?"):
                 if fail_sync.is_set():
                     fail_sync.clear()
@@ -126,7 +159,10 @@ def relay(origin):
                 self.send_header("Content-Type", upstream.getheader("Content-Type", "application/json"))
                 self.send_header("Content-Length", str(len(payload)))
                 self.end_headers()
-                self.wfile.write(payload)
+                try:
+                    self.wfile.write(payload)
+                except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+                    pass  # A chat may close while a deliberately delayed response is in flight.
             finally:
                 connection.close()
 
@@ -144,7 +180,9 @@ def relay(origin):
 
 
 def scenario(node, origin, root, token):
-    with relay(origin) as (relayed, fail_sync, hold_sync, request_held), contextlib.ExitStack() as stack:
+    arm_history, history_requested, release_history = (threading.Event() for _ in range(3))
+    with relay(origin, (arm_history, history_requested, release_history)) as (
+            relayed, fail_sync, hold_sync, request_held), contextlib.ExitStack() as stack:
         home = pathlib.Path(root) / "pty-home"
         alice = Terminal(node, home, "ptyalice", relayed)
         stack.callback(alice.close)
@@ -152,7 +190,7 @@ def scenario(node, origin, root, token):
         stack.callback(bob.close)
         for terminal, name in [(alice, "alice"), (bob, "bob")]:
             terminal.register("pty-password-" + name, token, "pty-passphrase-" + name)
-            terminal.command("/kimlik" if terminal is alice else "/identity")
+            terminal.type("/iden\t\r" if terminal is alice else "/kim\t\r")
             terminal.expect_ui("Account @pty", "Hesap @pty")
             terminal.code = terminal.expect(rb"((?:[0-9a-f]{8} ){7}[0-9a-f]{8})")[1].decode()
             terminal.expect("heartwood> ")
@@ -181,18 +219,70 @@ def scenario(node, origin, root, token):
         alice.expect("Reconnecting…")
         alice.expect("Connected.")
         alice.expect(alice.chat_prompt)
-        draft = "Yazıyorum çığ 🚲 " + "a" * 120
+        draft = "Yazıyorum çığ 🚲 " + "a" * (24 if sys.platform == "win32" else 120)
         alice.type(draft)
         bob.command("Türkçe bildirim şüÖ 🚀")
         bob.expect("Şifreli olay sunucu tarafından kabul edildi.")
         bob.expect(bob.chat_prompt)
         notification = alice.expect("@ptybob:localhost  Türkçe bildirim şüÖ 🚀")
         redraw = alice.expect(alice.chat_prompt + draft)
-        assert b"\r\n\r\n" in alice.output[notification.end():redraw.start()], "Wrapped redraw erased its notification row"
+        if sys.platform != "win32":
+            assert b"\r\n\r\n" in alice.output[notification.end():redraw.start()], "Wrapped redraw erased its notification row"
         alice.type("\r")
         alice.expect("The server accepted the encrypted event.")
         alice.expect(alice.chat_prompt)
         bob.expect("@ptyalice:localhost  " + draft)
+
+        alice.type("/s\t\t")
+        alice.expect("/search-next")
+        alice.type("\x15")
+        alice.command("/status")
+        alice.expect("New send: allowed at check time")
+        alice.expect(alice.chat_prompt)
+
+        arm_history.set()
+        alice.command("/history")
+        assert history_requested.wait(5), "No backward history request to delay"
+        alice.type("History draft")
+        bob.command("Yeni geçmiş çığ")
+        bob.expect("Şifreli olay sunucu tarafından kabul edildi.")
+        bob.expect(bob.chat_prompt)
+        alice.expect("@ptybob:localhost  Yeni geçmiş çığ")
+        alice.expect(alice.chat_prompt + "History draft")
+        release_history.set()
+        alice.expect("History page 1")
+        alice.expect("Events on this page have already been displayed.")
+        alice.expect(alice.chat_prompt + "History draft")
+        alice.type("\x15")
+        alice.command("/search TÜRKÇE")
+        alice.expect("Search results")
+        alice.expect("@ptybob:localhost  Türkçe bildirim")
+        alice.expect(alice.chat_prompt)
+
+        history_requested.clear()
+        release_history.clear()
+        arm_history.set()
+        alice.command("/history")
+        assert history_requested.wait(5), "No backward history request to cancel"
+        alice.command("/back")
+        alice.expect("heartwood> ")
+        release_history.set()
+        bob.command("While Alice is away")
+        bob.expect("Şifreli olay sunucu tarafından kabul edildi.")
+        alice.command("/conversations")
+        alice.expect("new activity")
+        alice.expect("heartwood> ")
+        alice.command("/chat " + room)
+        alice.expect("@ptybob:localhost  While Alice is away")
+        alice.expect(alice.chat_prompt)
+        alice.command("/back")
+        alice.expect("heartwood> ")
+        start = alice.offset
+        alice.command("/conversations")
+        end = alice.expect("heartwood> ").start()
+        assert b"new activity" not in alice.output[start:end], "Displayed message stayed unread"
+        alice.command("/chat " + room)
+        alice.expect(alice.chat_prompt)
 
         alice.type("\x1b[200~")
         alice.type("YAPISTIRMA-MESAJI\n/geri\n/cikis")
@@ -213,8 +303,16 @@ def scenario(node, origin, root, token):
         bob.expect("heartwood> ")
         bob.command("/cikis")
         bob.assert_exit()
+        remove = Terminal(node, home, "ptyalice", relayed, cli_args=["profiles", "remove", "ptyalice"])
+        stack.callback(remove.close)
+        remove.expect("Type the exact profile name ptyalice to remove it:")
+        remove.command("")
+        remove.expect("Profile removal cancelled.")
+        remove.assert_exit()
+        assert remove.profile.exists(), "Cancelled removal deleted the profile"
 
 
 if __name__ == "__main__":
     scenario(sys.argv[1], sys.argv[2], sys.argv[3], os.environ["HEARTWOOD_TEST_REGISTRATION_TOKEN"])
-    print("Linux PTY: both locales, aliases, secrets, redraw, Unicode, reconnect, history and exit passed.")
+    terminal = "Windows ConPTY" if sys.platform == "win32" else "Linux PTY"
+    print(f"{terminal}: completion, secrets, live history, search, unread, status, profile cancellation and exit passed.")

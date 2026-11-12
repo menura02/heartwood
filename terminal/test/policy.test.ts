@@ -30,8 +30,10 @@ test('origins, same-server IDs and terminal controls', () => {
 test('trusted identity includes both keys, user and device', () => {
   assert.equal(deviceCode(bob).length, 64);
   assert.doesNotThrow(() => assertTrusted(bob, bob));
-  assert.throws(() => assertTrusted(undefined, bob));
-  assert.throws(() => assertTrusted(bob, { ...bob, curve: 'changed' }));
+  assert.throws(() => assertTrusted(undefined, bob), {code: 'deviceNotVerified'});
+  for (const field of ['user', 'device', 'ed', 'curve'] as const) {
+    assert.throws(() => assertTrusted(bob, {...bob, [field]: 'changed'}), {code: 'trustedDeviceChanged'});
+  }
 });
 
 test('room must be private, encrypted and have exactly the two joined members', () => {

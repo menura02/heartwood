@@ -2,6 +2,21 @@
 
 # Changelog
 
+## 0.6.0
+
+- Added contextual Tab completion and help, history inside live chat, bounded local search and session unread indicators.
+- Added offline local profile inspection and confirmed removal, plus an expanded status report that shares send policy checks.
+- To send text beginning with a slash, use `/send MESSAGE` in chat.
+
+## 0.5.0
+
+### Added
+
+- Run `doctor` to check the runtime, native crypto binding, profile directory access, and optional Matrix connectivity.
+- Run `onboard` for guided registration or login, and `/guide` to see the next chat setup step.
+- Run the disposable two-account demo on Linux or WSL for encrypted chat and reconnection.
+- Added Windows ConPTY coverage and expanded tests for temporary failures, expired tokens and changed device keys.
+
 ## 0.4.0
 
 ### Added

@@ -62,6 +62,10 @@ export function assertRoomSettings(state: StateEvent[]): void {
 
 export function assertRoom(state: StateEvent[], self: string): string {
   assertRoomSettings(state);
+  return assertRoomMembership(state, self);
+}
+
+export function assertRoomMembership(state: StateEvent[], self: string): string {
   const members = state.filter(event => event.type === 'm.room.member' &&
     ['join', 'invite', 'knock'].includes(String(event.content.membership)));
   const own = members.find(event => event.state_key === self);

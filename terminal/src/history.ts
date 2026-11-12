@@ -6,6 +6,7 @@ export interface HistoryEvent {
   type: string;
   event_id?: string;
   sender?: string;
+  origin_server_ts?: number;
   content: Record<string, unknown>;
 }
 
@@ -42,7 +43,7 @@ export async function readForwardPage(request: HistoryRequest, room: string, fro
 
 async function readPage(request: HistoryRequest, room: string, query: URLSearchParams): Promise<RawHistoryPage> {
   const response = await request(`rooms/${part(room)}/messages?${query}`);
-  if (!isRecord(response) || !Array.isArray(response.chunk) || !isToken(response.start) ||
+  if (!isRecord(response) || !Array.isArray(response.chunk) || response.chunk.length > 50 || !isToken(response.start) ||
       (response.end !== undefined && !isToken(response.end)) || !response.chunk.every(isHistoryEvent)) {
     throw new HeartwoodError('invalidHistoryPage');
   }

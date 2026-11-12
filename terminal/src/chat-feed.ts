@@ -1,4 +1,4 @@
-export interface ChatLine { id: string; sender: string; body?: string }
+export interface ChatLine { id: string; sender: string; body?: string; timestamp?: number }
 
 export class ChatFeed {
   private readonly seen = new Map<string, boolean>();
