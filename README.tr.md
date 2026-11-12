@@ -45,6 +45,16 @@ Başka bir WSL dağıtımı kullanıyorsan adını komutta ve `HEARTWOOD_WSL_DIS
 
 Ana ekranda `/history !ROOM` son sayfayı getirir. Devamı varsa `/older !ROOM` kullan. Canlı sohbette `/refresh` duraklatılan okumayı sürdürür. Belirsiz gönderimler için `/retry` ile tekrar dene veya `/pending` ile ilgili odaları listele. Ana ekranda `/retry !ROOM` kullan. `/discard`, `yes` veya `evet` onayıyla yerel takibi bırakır. Ana ekranda `/discard` komutuna oda kimliğini ekle.
 
+## Tanılama ve yönlendirmeli kurulum
+
+`terminal/` içinden yerel denetimler için `npm start -- --lang tr doctor` çalıştır. Matrix API erişimini de denetlemek için `npm start -- --lang tr doctor http://127.0.0.1:18008` kullan. Çıkış kodu `0` denetimlerin geçtiğini veya uyarı verdiğini gösterir. Kod `1` bir denetimin ya da komut çağrısının başarısız olduğunu gösterir. Doctor dizin erişimi bilgilerini okur ve profilleri değiştirmez. Sunucu denetimi kimlik doğrulaması gerektirmeyen sürüm uç noktasını kullanır. Cihaz doğrulaması ayrı bir adımdır.
+
+`npm start -- --lang tr onboard` çalıştır. Akış, gizli giriş istemlerinden önce kayıt veya giriş seçimini, sunucuyu, profili ve kullanıcı adını sorar. İptal etmek için Ctrl+C’ye bas. Bir sonraki adımı görmek için ana ekranda istediğin zaman `/guide` veya `/rehber` kullan. Davet beklerken `/exit` ile çıkıp normal giriş komutuyla dönebilirsin.
+
+## Otomatik demoyu çalıştır
+
+Linux Node.js bulunan Linux veya WSL’de `HEARTWOOD_SYNAPSE_PYTHON` değişkenini yukarıdaki gibi ayarla. `terminal/` içinden `node lab/demo.ts --lang tr` veya `node lab/demo.ts` çalıştır. Komut kendi geçici laboratuvarını açar, iki gerçek terminalde şifreli sohbet ve kontrollü bağlantı kesintisi yürütür, seçilen terminal çıktısını gösterir ve kaynaklarını kapatır. Test aracı kurgusal kimlikler kullanıp kodlarını karşılaştırır. Gerçek kullanıcılar cihaz kodlarını güvenilir bir ikinci kanalda karşılaştırır.
+
 <a id="verify-zip"></a>
 
 ## İndirilen ZIP’i doğrula

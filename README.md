@@ -45,6 +45,16 @@ For another WSL distribution, use its name in the command and in `HEARTWOOD_WSL_
 
 Use `/history !ROOM` at the main prompt for the latest page and `/older !ROOM` when more events are available. In live chat, `/refresh` resumes paused reads. Use `/retry` for an uncertain send or `/pending` to list affected rooms. From the main prompt use `/retry !ROOM`. `/discard` drops local tracking after confirmation with `yes` or `evet`. From the main prompt pass the room ID to `/discard`.
 
+## Diagnostics and guided setup
+
+From `terminal/`, run `npm start -- doctor` for local checks, or `npm start -- doctor http://127.0.0.1:18008` to also check the Matrix API. Exit status `0` means the checks passed or reported warnings. Exit status `1` means a check or the invocation failed. Doctor reads directory access information and leaves profiles untouched. Its server check uses the unauthenticated versions endpoint. Device verification is a separate step.
+
+Run `npm start -- onboard` for prompts that collect the account mode, server, profile and username before the normal secret prompts. Press Ctrl+C to cancel. Use `/guide` (or `/rehber`) from the main prompt at any time to see the next step. You can leave with `/exit` while an invitation is pending and return with your usual login.
+
+## Run the automated demo
+
+In Linux or WSL with Linux Node.js, set `HEARTWOOD_SYNAPSE_PYTHON` as above. From `terminal/`, run `node lab/demo.ts` or `node lab/demo.ts --lang tr`. The command starts its own disposable lab, drives two real terminals through an encrypted chat and a controlled connection interruption, prints selected terminal output, and shuts down its resources. It uses fictional identities and compares their codes in the harness. Real users compare their codes over a trusted second channel.
+
 ## Verify a downloaded ZIP
 
 From the folder containing `heartwood-terminal.zip` and `SHA256SUMS`, run `sha256sum -c SHA256SUMS` on Linux or WSL. In PowerShell use:

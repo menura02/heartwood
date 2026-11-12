@@ -33,6 +33,8 @@ npm start -- --lang tr --help
 
 `ci/verify.ts` runs the type check and unit tests, including the language checks. For changes to terminal interactions, follow the [lab setup](README.md#try-the-local-lab) to set `HEARTWOOD_SYNAPSE_PYTHON`. From `terminal/`, run `node integration/run-local.ts` on Linux or on Windows with WSL. Run `node integration/run-pty.ts` on Linux or WSL with Node and Python 3.13 or later. The runners start their own labs. Use `python -B ci/test_release.py` to test packaging.
 
+To test native Windows ConPTY, run `node integration/run-pty.ts` from Windows PowerShell with Windows Node.js, native Python 3.12 or later, and the WSL Synapse lab environment above. Set `HEARTWOOD_PTY_PYTHON` to the native Python executable if `python` is unavailable. CI provisions an isolated WSL distribution for the server and uses native Windows Node.js for both clients. The paste scenario sends explicit bracketed paste markers.
+
 ## Prepare a release
 
 1. Match the version in `terminal/package.json`, its lockfile, and both changelogs. Merge the PR after the Windows and Ubuntu checks and the Linux Synapse job pass. Confirm that CI passes on the resulting `main` commit. [CI workflow](.github/workflows/terminal.yml)

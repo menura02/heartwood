@@ -33,6 +33,8 @@ npm start -- --lang tr --help
 
 `ci/verify.ts`, tip kontrolünü ve dil kontrolleri dahil birim testlerini çalıştırır. Terminal etkileşimleri değiştiğinde `HEARTWOOD_SYNAPSE_PYTHON` değerini ayarlamak için [laboratuvar kurulumunu](README.tr.md#yerel-laboratuvarı-dene) izle. `terminal/` içinden Linux’ta veya WSL kullanan Windows’ta `node integration/run-local.ts` çalıştır. Node ve Python 3.13 veya üstüyle Linux veya WSL’de `node integration/run-pty.ts` çalıştır. Testler kendi laboratuvarlarını başlatır. Paketlemeyi `python -B ci/test_release.py` ile sına.
 
+Windows ConPTY testi için Windows Node.js, yerel Python 3.12 veya üstü ve yukarıdaki WSL Synapse ortamıyla PowerShell’den `node integration/run-pty.ts` çalıştır. `python` komutu kullanılamıyorsa `HEARTWOOD_PTY_PYTHON` değişkenine yerel Python yolunu yaz. CI sunucu için yalıtılmış bir WSL dağıtımı kurar ve iki istemciyi Windows Node.js ile çalıştırır. Yapıştırma senaryosu sınır işaretlerini açıkça gönderir.
+
 ## Sürüm hazırla
 
 1. `terminal/package.json`, kilit dosyası ve iki değişiklik kaydındaki sürümleri eşleştir. Windows ve Ubuntu kontrolleriyle Linux Synapse işi geçince PR’ı birleştir. Ortaya çıkan `main` commit’inde CI’ın geçtiğini doğrula. [CI iş akışı](.github/workflows/terminal.yml)
