@@ -2,6 +2,12 @@
 
 # Changelog
 
+## 0.6.2
+
+- Bind open-chat history reads to the original peer, validate profile key-store paths, and recover interrupted profile removal safely.
+- Bound retained history cursors and require disposable-lab context before Synapse tests can access the network.
+- Verify the packaged client import in the extracted release archive.
+
 ## 0.6.1
 
 - Validate Matrix responses and bound response body reads before processing them.

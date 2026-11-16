@@ -44,8 +44,8 @@ To test native Windows ConPTY, run `node integration/run-pty.ts` from Windows Po
 To run the release package check locally, use the current version and a fresh output directory. Run these commands from the repository root with Python and Node.js 24 on PATH.
 
 ```sh
-python -B terminal/ci/release.py package v0.6.1 terminal/.lab/release-check
+python -B terminal/ci/release.py package v0.6.2 terminal/.lab/release-check
 python -B terminal/ci/smoke_release.py terminal/.lab/release-check/heartwood-terminal.zip
 ```
 
-The smoke test installs from the lockfile in an isolated directory, checks help and offline `doctor` in both languages, and migrates synthetic legacy profile metadata with a marker in place of an SDK key database.
+The smoke test installs from the lockfile in an isolated directory, checks help and offline `doctor` in both languages, imports the packaged client entry point, and migrates synthetic legacy profile metadata with a marker in place of an SDK key database. The default integration command starts its own disposable lab; invoking the Synapse test directly fails before network access because the in-process lab context is absent.

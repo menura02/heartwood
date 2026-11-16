@@ -11,7 +11,7 @@
 
 Gerçek kimlik bilgilerini, belirteçleri, anahtarları, profilleri ve özel mesajları Git’e, günlüklere veya hata raporlarına ekleme. Geçici laboratuvar kısa ömürlü kayıt belirtecini yerelde gösterir.
 
-Arama metni, sonuçlar, tekrar engelleme ve okunmamış durumu bellekte tutulur. Sohbetten çıkınca arama referansları bırakılır. JavaScript belleğin fiziksel olarak silinmesini garanti etmez. Yerel kaldırma komutu doğrulanmış profil dosyalarını normal dosya sistemi işlemleriyle siler. İşlem kesilirse elle inceleme için profil kökünde yalıtılmış bir `.removed-*` dizini kalabilir.
+Arama metni, sonuçlar, tekrar engelleme ve okunmamış durumu bellekte tutulur. Sohbetten çıkınca arama referansları bırakılır. JavaScript belleğin fiziksel olarak silinmesini garanti etmez. Yerel kaldırma komutu doğrulanmış profil dosyalarını normal dosya sistemi işlemleriyle siler. Karantinaya taşıma öncesi kesinti, sonraki kilitli işlemde güvenle toparlanabilen sürümlü bir kaldırma işareti bırakır. Karantinaya taşıma sonrası kesinti, elle inceleme için profil kökünde yalıtılmış bir `.removed-*` dizini bırakabilir. Anahtar deposu yol kontrolleri profil dışına bağlı yollar üzerinden yazma riskini azaltır; aynı işletim sistemi kullanıcısıyla çalışan kötü niyetli bir sürecin kontroller arasında dosya sistemine müdahale etmesini engellemez.
 
 Profil metaverisi ve SDK anahtar deposu ayrı ayrı kaydedilir. İstemci kesintiden sonra son kaydedilen profil imlecinden devam eder. Geçerli profil kaydı olmadan anahtar verisi veya geçici yazım dosyası bulunursa Heartwood durur ve bu dosyaları korur.
 

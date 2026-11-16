@@ -44,8 +44,8 @@ Windows ConPTY testi için Windows Node.js, yerel Python 3.12 veya üstü ve yuk
 Sürüm paketini yerelde sınamak için güncel sürümü ve yeni bir çıktı dizinini kullan. Python ve Node.js 24 PATH üzerindeyken şu komutları depo kökünden çalıştır.
 
 ```sh
-python -B terminal/ci/release.py package v0.6.1 terminal/.lab/release-check
+python -B terminal/ci/release.py package v0.6.2 terminal/.lab/release-check
 python -B terminal/ci/smoke_release.py terminal/.lab/release-check/heartwood-terminal.zip
 ```
 
-Test, yalıtılmış bir dizinde kilit dosyasından kurulum yapar, iki dilde yardım ve çevrimdışı `doctor` çıktısını denetler. Eski profil geçişini, SDK anahtar veritabanı yerine işaret dosyası kullanılan sentetik metaveriyle sınar.
+Test, yalıtılmış bir dizinde kilit dosyasından kurulum yapar, iki dilde yardım ve çevrimdışı `doctor` çıktısını denetler, paketlenmiş istemci giriş noktasını yükler. Eski profil geçişini, SDK anahtar veritabanı yerine işaret dosyası kullanılan sentetik metaveriyle sınar. Varsayılan entegrasyon komutu kendi geçici laboratuvarını başlatır; Synapse testini doğrudan çalıştırmak süreç içi laboratuvar bağlamı bulunmadığından ağ erişiminden önce başarısız olur.

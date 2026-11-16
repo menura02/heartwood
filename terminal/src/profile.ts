@@ -1,7 +1,7 @@
 import { HeartwoodError } from './failures.ts';
 import { lstat, mkdir, open, realpath, rename, unlink } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { dirname, join, relative } from 'node:path';
+import { join, relative } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { matrixOrigin } from './policy.ts';
 import type { DeviceIdentity } from './policy.ts';
@@ -25,17 +25,19 @@ export async function existingProfileRoot(root: string): Promise<string | undefi
 
 export async function existingProfileDirectory(root: string, name: string): Promise<string | undefined> {
   if (!validProfileName(name)) throw new HeartwoodError('invalidProfileOrUsername');
-  const path = join(root, name);
-  const info = await lstat(path).catch((error: NodeJS.ErrnoException) => {
-    if (error.code !== 'ENOENT') throw error;
-  });
+  return existingOwnedDirectory(join(root, name));
+}
+
+async function existingOwnedDirectory(path: string): Promise<string | undefined> {
+  const info = await statIfPresent(path);
   if (!info) return undefined;
   if (!info.isDirectory()) throw new HeartwoodError('profileUnsafePath');
   const resolved = await realpath(path);
-  if (relative(root, dirname(resolved)) || relative(path, resolved)) throw new HeartwoodError('profileUnsafePath');
+  if (relative(path, resolved)) throw new HeartwoodError('profileUnsafePath');
   return resolved;
 }
 
+const cryptoDatabase = 'matrix-sdk-crypto.sqlite3';
 const schemaVersion = 1;
 const maxRecordBytes = 1024 * 1024;
 const profileUsername = /^[a-z0-9._=-]{1,64}$/;
@@ -184,6 +186,26 @@ export class Profile {
       await release();
       throw error;
     }
+  }
+
+  async cryptoStorePath(): Promise<string> {
+    if (this.closing || !await existingOwnedDirectory(this.path)) throw new HeartwoodError('profileUnsafePath');
+    const path = join(this.path, 'keys');
+    const directory = await existingOwnedDirectory(path);
+    let databaseExists = false;
+    if (directory) {
+      for (const suffix of ['', '-journal', '-wal', '-shm']) {
+        const file = join(directory, cryptoDatabase + suffix);
+        const info = await statIfPresent(file);
+        if (!info) continue;
+        if (!info.isFile() || info.nlink !== 1 || relative(file, await realpath(file))) {
+          throw new HeartwoodError('profileUnsafePath');
+        }
+        if (!suffix) databaseExists = true;
+      }
+    }
+    if (!databaseExists && this.data.identity) throw new HeartwoodError('cryptoStoreMissing');
+    return path;
   }
 
   save(changes: DataChanges = {}): Promise<void> {

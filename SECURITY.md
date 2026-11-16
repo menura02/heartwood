@@ -11,7 +11,7 @@
 
 Keep real credentials, tokens, keys, profiles and private messages out of Git, logs and issue reports. The disposable lab displays its short-lived registration token locally.
 
-Search text, results, display deduplication, and unread tracking are held in memory. Leaving a chat releases its search references. JavaScript offers no guarantee of physical memory erasure. The local removal command deletes verified profile files through normal filesystem operations. An interruption during removal can leave an isolated `.removed-*` directory under the profile root for manual inspection.
+Search text, results, display deduplication, and unread tracking are held in memory. Leaving a chat releases its search references. JavaScript offers no guarantee of physical memory erasure. The local removal command deletes verified profile files through normal filesystem operations. An interruption before quarantine leaves a versioned removal marker that a later locked operation can safely recover. An interruption after quarantine can leave an isolated `.removed-*` directory under the profile root for manual inspection. Key-store path checks reduce accidental or linked-path writes outside the profile but cannot prevent a concurrent malicious process running as the same operating-system user from racing filesystem checks.
 
 Profile metadata and the SDK key store have separate persistence. Following an interruption, the client resumes from the last committed profile cursor. If key data or a staged write exists without a valid profile record, Heartwood stops and preserves those files.
 

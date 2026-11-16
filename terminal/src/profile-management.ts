@@ -1,7 +1,7 @@
 import { lstat, mkdtemp, readdir, realpath, rename, rm, rmdir } from 'node:fs/promises';
 import { dirname, join, relative } from 'node:path';
 import { HeartwoodError } from './failures.ts';
-import { acquireProfileLock, restoreProfileGuard, withProfileGate } from './profile-lock.ts';
+import { acquireProfileLock, withProfileGate } from './profile-lock.ts';
 import { defaultProfileRoot, existingProfileDirectory, existingProfileRoot, readProfileData, validProfileName } from './profile.ts';
 
 export interface ProfileRecord {
@@ -88,12 +88,10 @@ export async function removeProfile(name: string, root = defaultProfileRoot(), e
       const container = await mkdtemp(join(canonical, '.removed-'));
       try {
         await release(true);
-        await rename(directory, join(container, 'profile')).catch(async error => {
-          if (await existingProfileDirectory(canonical, name) === directory) await restoreProfileGuard(directory);
-          throw error;
-        });
+        await rename(directory, join(container, 'profile'));
       } catch (error) {
-        await rmdir(container);
+        // Keep the recognizable guard until the next locked operation can restore it.
+        await rmdir(container).catch(() => {});
         throw error;
       }
       return container;

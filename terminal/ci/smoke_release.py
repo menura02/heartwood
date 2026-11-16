@@ -119,6 +119,20 @@ def check_legacy_profile(node, terminal, environment, home):
             raise ValueError("Profile migration modified the synthetic SDK store.")
 
 
+def check_installed_runtime(node, npm, terminal, environment):
+    for language, usage, crypto, offline in (
+        ("en", "Usage:", "The native Matrix binding loads.", "Server omitted."),
+        ("tr", "Kullanım:", "Yerel Matrix bağlayıcısı yüklenebiliyor.", "Sunucu verilmedi."),
+    ):
+        command = [npm, "start", "--", "--lang", language]
+        run_check(f"Help ({language})", [*command, "--help"], terminal, environment, (usage,))
+        run_check(f"Offline doctor ({language})", [*command, "doctor"], terminal, environment, (crypto, offline))
+    # Help and doctor can exit before the CLI loads its client-only dependencies.
+    run_check("Client module import",
+              [node, "--input-type=module", "--eval", "await import('./src/client.ts');"],
+              terminal, environment)
+
+
 def smoke(archive):
     verify_checksum(archive)
     node = shutil.which("node")
@@ -138,15 +152,9 @@ def smoke(archive):
         environment = isolated_environment(home, directory)
         run_check("npm ci in extracted package", [npm, "ci", "--no-audit", "--no-fund"],
                   terminal, environment, timeout=180)
-        for language, usage, crypto, offline in (
-            ("en", "Usage:", "The native Matrix binding loads.", "Server omitted."),
-            ("tr", "Kullanım:", "Yerel Matrix bağlayıcısı yüklenebiliyor.", "Sunucu verilmedi."),
-        ):
-            command = [npm, "start", "--", "--lang", language]
-            run_check(f"Help ({language})", [*command, "--help"], terminal, environment, (usage,))
-            run_check(f"Offline doctor ({language})", [*command, "doctor"], terminal, environment, (crypto, offline))
+        check_installed_runtime(node, npm, terminal, environment)
         if (home / ".heartwood").exists():
-            raise ValueError("Help or offline doctor created a profile directory.")
+            raise ValueError("An offline runtime check created a profile directory.")
         check_legacy_profile(node, terminal, environment, home)
 
 

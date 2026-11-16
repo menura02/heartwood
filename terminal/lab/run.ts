@@ -1,8 +1,8 @@
 import { spawn } from 'node:child_process';
 import { createHmac, randomBytes } from 'node:crypto';
-import { mkdir, mkdtemp, readFile, rm, writeFile, copyFile } from 'node:fs/promises';
+import { lstat, mkdir, mkdtemp, readFile, realpath, rm, writeFile, copyFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
-import { basename, dirname, join } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative } from 'node:path';
 import { setTimeout as wait } from 'node:timers/promises';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { formatError, HeartwoodError } from '../src/failures.ts';
@@ -11,6 +11,41 @@ import type { Language } from '../src/locale.ts';
 import { labMessage } from './messages.ts';
 
 const lab = dirname(fileURLToPath(import.meta.url));
+const ownerFile = '.heartwood-lab-owner';
+
+export async function verifyLabWorkspace(projectRoot: string, directory: string, owner: string): Promise<string> {
+  try {
+    const project = await realpath(projectRoot);
+    const parent = join(project, '.lab');
+    const parentInfo = await lstat(parent);
+    if (!parentInfo.isDirectory() || parentInfo.isSymbolicLink() || await realpath(parent) !== parent) {
+      throw new Error('Unsafe lab parent');
+    }
+    const info = await lstat(directory);
+    if (!info.isDirectory() || info.isSymbolicLink() || !basename(directory).startsWith('synapse-run-')) {
+      throw new Error('Unsafe lab directory');
+    }
+    const resolved = await realpath(directory);
+    const within = relative(parent, resolved);
+    if (dirname(resolved) !== parent || !within || within === '..' ||
+        within.startsWith(`..${process.platform === 'win32' ? '\\' : '/'}`) ||
+        isAbsolute(within)) throw new Error('Lab directory escaped its root');
+    const marker = join(resolved, ownerFile);
+    const markerInfo = await lstat(marker);
+    if (!markerInfo.isFile() || markerInfo.isSymbolicLink() || markerInfo.nlink !== 1 ||
+        markerInfo.size !== Buffer.byteLength(owner) || await readFile(marker, 'utf8') !== owner) {
+      throw new Error('Lab ownership marker mismatch');
+    }
+    return resolved;
+  } catch {
+    throw new HeartwoodError('labUnsafeDirectory');
+  }
+}
+
+async function removeLabWorkspace(projectRoot: string, directory: string, owner: string): Promise<void> {
+  const verified = await verifyLabWorkspace(projectRoot, directory, owner);
+  await rm(verified, {recursive: true, force: false, maxRetries: 8, retryDelay: 200});
+}
 
 async function checkPort(port: number): Promise<void> {
   const probe = createServer();
@@ -59,10 +94,13 @@ export async function startLab(port: number, fast = false) {
   const parent = join(lab, '..', '.lab');
   await mkdir(parent, {recursive: true, mode: 0o700});
   const directory = await mkdtemp(join(parent, 'synapse-run-'));
+  const owner = randomBytes(32).toString('hex');
   const origin = `http://127.0.0.1:${port}`;
   const secret = randomBytes(32).toString('hex');
   let stop: (() => Promise<void>) | undefined;
   try {
+    await writeFile(join(directory, ownerFile), owner, {flag: 'wx', mode: 0o600});
+    await verifyLabWorkspace(dirname(lab), directory, owner);
     const template = await readFile(join(lab, 'homeserver.yaml'), 'utf8');
     const rates = fast ? '\nrc_message:\n  per_second: 100\n  burst_count: 200\n' : '';
     await writeFile(join(directory, 'homeserver.yaml'), template.replaceAll('18008', String(port)) + rates);
@@ -85,7 +123,7 @@ export async function startLab(port: number, fast = false) {
       child.stdin.end();
       await Promise.race([exited, wait(15_000, undefined, {ref: false})]);
       if (!finished) throw new HeartwoodError('labStopUnconfirmed');
-      await rm(directory, {recursive: true, force: true, maxRetries: 8, retryDelay: 200});
+      await removeLabWorkspace(dirname(lab), directory, owner);
     };
     const deadline = Date.now() + 30_000;
     let ready = false;
@@ -100,7 +138,7 @@ export async function startLab(port: number, fast = false) {
       directory, exited, stop};
   } catch (error) {
     if (stop) await stop();
-    else await rm(directory, {recursive: true, force: true});
+    else await removeLabWorkspace(dirname(lab), directory, owner).catch(() => {});
     throw error;
   }
 }

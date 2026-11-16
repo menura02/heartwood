@@ -4,6 +4,8 @@ import { ChatSession } from '../src/chat-session.ts';
 import { completeCommand, validArguments } from '../src/commands.ts';
 import { HistoryNavigator } from '../src/history-navigation.ts';
 import { SessionUnread } from '../src/unread.ts';
+import { Heartwood } from '../src/client.ts';
+import { megolm } from '../src/policy.ts';
 
 test('Tab only completes a whole command token at the cursor in the current context', () => {
   assert.deepEqual(completeCommand('/ide', 4, 'main'), [['/identity'], '/ide']);
@@ -71,6 +73,75 @@ test('a cyclic history cursor cannot advance the navigation state', async () => 
   await assert.rejects(history.older('!one'), {code: 'historyCursorStalled'});
   next = 'third';
   assert.equal((await history.older('!one')).page, 3);
+});
+
+test('live and history reject a replacement peer in the same room without updating search or its cursor', async () => {
+  const room = '!room';
+  const own = '@alice:localhost';
+  const original = '@bob:localhost';
+  const replacement = '@carol:localhost';
+  let peer = original;
+  let delayHistory = false;
+  let historyStarted!: () => void;
+  let finishHistory!: () => void;
+  const historyRequestStarted = new Promise<void>(resolve => { historyStarted = resolve; });
+  const calls: Array<string | null> = [];
+  const member = (user: string) => ({type: 'm.room.member', state_key: user, content: {membership: 'join'}});
+  const settings = [
+    ['com.heartwood.direct', {version: 1}], ['m.room.encryption', {algorithm: megolm}],
+    ['m.room.join_rules', {join_rule: 'invite'}], ['m.room.history_visibility', {history_visibility: 'joined'}],
+    ['m.room.create', {'m.federate': false}],
+  ].map(([type, content]) => ({type, state_key: '', content}));
+  const client: Heartwood = Object.assign(Object.create(Heartwood.prototype), {
+    identity: {user: own}, profile: {data: {blocked: []}}, sync: async () => 'anchor',
+    roomState: async () => [...settings, member(own), member(peer)],
+    http: {request: async (_method: string, path: string) => {
+      const from = new URL(path, 'https://fixture.invalid/').searchParams.get('from');
+      calls.push(from);
+      if (delayHistory) {
+        delayHistory = false;
+        historyStarted();
+        return await new Promise(resolve => {
+          finishHistory = () => resolve({start: 'anchor', end: 'late', chunk: [
+            {type: 'm.room.encrypted', event_id: '$replacement-late', sender: replacement, content: {}},
+          ]});
+        });
+      }
+      return {start: 'anchor', end: from === 'previous' ? 'previous2' : from === 'previous2' ? undefined : 'previous', chunk: [
+        {type: 'm.room.encrypted', event_id: peer === original ? '$original' : '$replacement', sender: peer, content: {}},
+      ]};
+    }},
+    decode: async (_room: string, sender: string, event: {event_id: string}) => ({
+      id: event.event_id, sender, body: sender === original ? 'original fixture' : 'replacement fixture',
+    }),
+  });
+  const nav = new HistoryNavigator((id, before, _signal, expectedPeer) => client.historyPage(id, before, expectedPeer));
+  const session = new ChatSession();
+  const live = await client.openLive(room, original);
+  session.display(live.initial);
+  session.display((await nav.latest(room, undefined, live.peer)).lines);
+  peer = replacement;
+  await assert.rejects(live.refresh(), {code: 'chatPeerChanged'});
+  await assert.rejects(nav.older(room, undefined, live.peer).then(page => session.display(page.lines)),
+    {code: 'chatPeerChanged'});
+  session.search('replacement fixture', 'en');
+  assert.deepEqual(session.results()?.lines, []);
+  peer = original;
+  assert.equal((await nav.older(room, undefined, live.peer)).page, 2);
+  assert.deepEqual(calls, ['anchor', null, 'previous']);
+  delayHistory = true;
+  const delayed = nav.older(room, undefined, live.peer);
+  await historyRequestStarted;
+  peer = replacement;
+  finishHistory();
+  await assert.rejects(delayed, {code: 'chatPeerChanged'});
+  session.search('replacement fixture', 'en');
+  assert.deepEqual(session.results()?.lines, []);
+  peer = original;
+  assert.equal((await nav.older(room, undefined, live.peer)).page, 3);
+  assert.deepEqual(calls, ['anchor', null, 'previous', 'previous2', 'previous2']);
+  peer = replacement;
+  assert.equal((await nav.latest(room)).lines[0].sender, replacement);
 });
 
 test('session unread ignores baseline, join backfill, self, and duplicates, and clears only on readable display', () => {

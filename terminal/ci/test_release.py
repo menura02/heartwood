@@ -1,6 +1,8 @@
 from hashlib import sha256
 import json
+import os
 from pathlib import Path
+import shutil
 import stat
 import tempfile
 import unittest
@@ -9,7 +11,7 @@ import warnings
 from zipfile import ZipFile, ZipInfo
 
 from release import PACKAGE_FILES, SEMVER_TAG, build_package, validate_tag, validate_version
-from smoke_release import extract_package, verify_checksum
+from smoke_release import check_installed_runtime, extract_package, isolated_environment, verify_checksum
 
 
 class ReleaseTest(unittest.TestCase):
@@ -107,6 +109,42 @@ class ReleaseTest(unittest.TestCase):
         (output / "SHA256SUMS").write_text("incorrect", encoding="ascii")
         with self.assertRaisesRegex(ValueError, "checksum"):
             verify_checksum(archive)
+
+    def test_runtime_smoke_detects_a_missing_client_only_module(self):
+        node = shutil.which("node")
+        npm = shutil.which("npm.cmd" if os.name == "nt" else "npm")
+        self.assertTrue(node and npm, "The package runtime test requires Node.js and npm on PATH.")
+        self.write("terminal/package.json", {
+            "version": "0.3.0", "type": "module", "scripts": {"start": "node src/cli.ts"},
+        })
+        (self.root / "terminal/src/cli.ts").write_text(
+            "const turkish = process.argv.includes('tr');\n"
+            "if (process.argv.includes('--help')) console.log(turkish ? 'Kullanım:' : 'Usage:');\n"
+            "else console.log(turkish ? 'Yerel Matrix bağlayıcısı yüklenebiliyor. Sunucu verilmedi.' "
+            ": 'The native Matrix binding loads. Server omitted.');\n",
+            encoding="utf-8",
+        )
+        client_dependency = "terminal/src/client-runtime-fixture.ts"
+        (self.root / client_dependency).write_text("export {};", encoding="utf-8")
+        (self.root / "terminal/src/client.ts").write_text(
+            "import './client-runtime-fixture.ts'; export class Heartwood {};", encoding="utf-8",
+        )
+        environment = isolated_environment(self.root / "home", self.root)
+        for description, files in (("complete", (*PACKAGE_FILES, client_dependency)), ("omitted", PACKAGE_FILES)):
+            with self.subTest(package=description):
+                output = self.root / description
+                extracted = self.root / f"extracted-{description}"
+                with patch("release.PACKAGE_FILES", files), patch("smoke_release.PACKAGE_FILES", files):
+                    build_package(self.root, "v0.3.0", output)
+                    archive = output / "heartwood-terminal.zip"
+                    verify_checksum(archive)
+                    extract_package(archive, extracted)
+                terminal = extracted / "terminal"
+                if description == "complete":
+                    check_installed_runtime(node, npm, terminal, environment)
+                else:
+                    with self.assertRaisesRegex(ValueError, "Client module import failed"):
+                        check_installed_runtime(node, npm, terminal, environment)
 
     def test_smoke_rejects_unsafe_or_unexpected_entries_before_extracting(self):
         symlink = ZipInfo("terminal/src/cli.ts")

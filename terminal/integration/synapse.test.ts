@@ -2,14 +2,14 @@ import assert from 'node:assert/strict';
 import { fork } from 'node:child_process';
 import type { ChildProcess } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { mkdtemp, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { deviceCode } from '../src/policy.ts';
 import type { DeviceIdentity } from '../src/policy.ts';
 import type { HistoryPage } from '../src/history.ts';
+import { requireDisposableLab } from './lab-context.ts';
 
 function rpc<T>(worker: ChildProcess, op: string, args: Record<string, unknown> = {}): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -29,12 +29,9 @@ function rpc<T>(worker: ChildProcess, op: string, args: Record<string, unknown> 
 }
 
 test('Synapse: encrypted chat, offline delivery, paginated history and access boundaries', {timeout: 300_000}, async context => {
-  const origin = process.env.HEARTWOOD_TEST_ORIGIN;
-  const token = process.env.HEARTWOOD_TEST_REGISTRATION_TOKEN;
-  assert.ok(origin && token, 'Use a disposable Synapse and supply the two integration environment variables.');
-  const logPath = process.env.HEARTWOOD_TEST_SERVER_LOG;
-  const logOffset = logPath ? (await readFile(logPath)).length : 0;
-  const root = await mkdtemp(join(tmpdir(), 'heartwood-test-'));
+  const {origin, token, logPath, directory} = requireDisposableLab();
+  const logOffset = (await readFile(logPath)).length;
+  const root = await mkdtemp(join(directory, 'heartwood-test-'));
   const prefix = randomUUID().slice(0, 8);
   const password = randomUUID();
   const passphrase = randomUUID();
@@ -62,10 +59,7 @@ test('Synapse: encrypted chat, offline delivery, paginated history and access bo
     }
   }
 
-  context.after(async () => {
-    try { await Promise.all([...workers.keys()].map(close)); }
-    finally { await rm(root, {recursive: true, force: true, maxRetries: 8, retryDelay: 200}); }
-  });
+  context.after(async () => { await Promise.all([...workers.keys()].map(close)); });
 
   const alice = await open('alice', true);
   let bob = await open('bob', true);
@@ -173,14 +167,12 @@ test('Synapse: encrypted chat, offline delivery, paginated history and access bo
     before = raw.end;
   }
   assert.equal(encryptedEvents, 123);
-  if (logPath) {
-    const log = (await readFile(logPath)).subarray(logOffset).toString('utf8');
-    assert.ok(log.includes('/send/m.room.encrypted'), 'server log contains a send request');
-    assert.ok(!log.includes(marker), 'fixture plaintext absent in selected server log');
-    assert.ok(!log.includes(response), 'fixture reply absent in selected server log');
-    assert.ok(!log.includes(fixturePrefix), 'pagination fixture plaintext absent in selected server log');
-    assert.ok(!log.includes(lostMessage), 'retry fixture plaintext absent in selected server log');
-  }
+  const log = (await readFile(logPath)).subarray(logOffset).toString('utf8');
+  assert.ok(log.includes('/send/m.room.encrypted'), 'server log contains a send request');
+  assert.ok(!log.includes(marker), 'fixture plaintext absent in selected server log');
+  assert.ok(!log.includes(response), 'fixture reply absent in selected server log');
+  assert.ok(!log.includes(fixturePrefix), 'pagination fixture plaintext absent in selected server log');
+  assert.ok(!log.includes(lostMessage), 'retry fixture plaintext absent in selected server log');
   const replacement = await open('bob-replacement', false, passphrase, 'bob');
   await assert.rejects(rpc(alice.worker, 'send', {room, text: 'extra device'}), {code: 'tooManyDevices'});
   await rpc(bob.worker, 'logout');

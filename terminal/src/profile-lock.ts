@@ -6,6 +6,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { setTimeout as wait } from 'node:timers/promises';
 
 const marker = 'sqlite-owner';
+const removalMarker = 'sqlite-removing';
 const protocol = 'heartwood-profile-lock-v1\n';
 
 async function openLockDatabase(path: string): Promise<DatabaseSync> {
@@ -43,12 +44,15 @@ export async function withProfileGate<T>(root: string, action: () => Promise<T>)
   finally { database.close(); }
 }
 
-export async function restoreProfileGuard(profile: string): Promise<void> {
-  const guard = join(profile, 'in-use');
-  if (!(await lstat(guard)).isDirectory() || relative(guard, await realpath(guard))) {
-    throw new HeartwoodError('profileUnsafePath');
-  }
-  await writeFile(join(guard, marker), protocol, {flag: 'wx', mode: 0o600});
+async function guardMarker(guard: string): Promise<string | undefined> {
+  if (!(await lstat(guard)).isDirectory() || relative(guard, await realpath(guard))) return;
+  const entries = await readdir(guard);
+  if (entries.length !== 1 || ![marker, removalMarker].includes(entries[0])) return;
+  const path = join(guard, entries[0]);
+  const info = await lstat(path);
+  if (!info.isFile() || info.nlink !== 1 || info.size !== Buffer.byteLength(protocol) ||
+      relative(path, await realpath(path)) || await readFile(path, 'utf8') !== protocol) return;
+  return entries[0];
 }
 
 export async function acquireProfileLock(profile: string): Promise<(retire?: boolean) => Promise<void>> {
@@ -60,14 +64,13 @@ export async function acquireProfileLock(profile: string): Promise<(retire?: boo
       throw error;
     });
     if (created) {
-      await restoreProfileGuard(profile);
+      if (relative(guard, await realpath(guard))) throw new HeartwoodError('profileUnsafePath');
+      await writeFile(join(guard, marker), protocol, {flag: 'wx', mode: 0o600});
     } else {
-      const known = await (async () => {
-        if (!(await lstat(guard)).isDirectory() || !(await lstat(join(guard, marker))).isFile()) return false;
-        if ((await readdir(guard)).length !== 1) return false;
-        return await readFile(join(guard, marker), 'utf8') === protocol;
-      })().catch(() => false);
+      const known = await guardMarker(guard).catch(() => undefined);
       if (!known) throw new HeartwoodError('profileLockUncertain');
+      // Both locks are held. If the profile is still at its original path, removal never committed.
+      if (known === removalMarker) await rename(join(guard, removalMarker), join(guard, marker));
     }
   } catch (error) {
     database.close();
@@ -82,7 +85,7 @@ export async function acquireProfileLock(profile: string): Promise<(retire?: boo
     try {
       if (retire) {
         // Leave a guard older clients cannot recover, before releasing SQLite for the Windows rename.
-        await unlink(join(guard, marker));
+        await rename(join(guard, marker), join(guard, removalMarker));
         return;
       }
       // A legacy client may create a fresh guard after the rename. Never remove that guard.

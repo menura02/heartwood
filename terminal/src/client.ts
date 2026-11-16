@@ -1,8 +1,6 @@
 import { HeartwoodError } from './failures.ts';
 import type { FailureCode } from './failures.ts';
 import { randomUUID } from 'node:crypto';
-import { access } from 'node:fs/promises';
-import { join } from 'node:path';
 import {
   CollectStrategy, DeviceId, DeviceLists, EncryptionSettings, HistoryVisibility, OlmMachine,
   RequestType, RoomId, StoreType, UserId,
@@ -84,12 +82,7 @@ export class Heartwood {
 
   static async open(http: MatrixHttp, profile: Profile, session: Login, passphrase: string): Promise<Heartwood> {
     if (passphrase.length < 12) throw new HeartwoodError('storePassphraseTooShort');
-    const keyPath = join(profile.path, 'keys');
-    if (profile.data.identity) {
-      await access(join(keyPath, 'matrix-sdk-crypto.sqlite3')).catch(() => {
-        throw new HeartwoodError('cryptoStoreMissing');
-      });
-    }
+    const keyPath = await profile.cryptoStorePath();
     const machine = await OlmMachine.initialize(new UserId(session.user_id), new DeviceId(session.device_id),
       keyPath, passphrase, StoreType.Sqlite).catch(() => {
       throw new HeartwoodError('cryptoStoreOpenFailed');
@@ -265,8 +258,10 @@ export class Heartwood {
     return validated(response, isRoomState, 'matrixInvalidResponse');
   }
 
-  private async roomPeer(room: string): Promise<string> {
-    return this.activePeer(assertRoom(await this.roomState(room), this.identity.user));
+  private async roomPeer(room: string, expectedPeer?: string): Promise<string> {
+    const peer = this.activePeer(assertRoom(await this.roomState(room), this.identity.user));
+    if (expectedPeer !== undefined && peer !== expectedPeer) throw new HeartwoodError('chatPeerChanged');
+    return peer;
   }
 
   async status(room: string): Promise<{peer: string; verified: boolean}> {
@@ -496,27 +491,30 @@ export class Heartwood {
     return (await this.historyPage(room)).lines;
   }
 
-  async historyPage(room: string, before?: string): Promise<HistoryPage> {
+  async historyPage(room: string, before?: string, expectedPeer?: string): Promise<HistoryPage> {
     await this.sync();
-    const peer = await this.roomPeer(room);
+    const peer = await this.roomPeer(room, expectedPeer);
     const {events, next} = await readHistoryPage(path => this.http.request('GET', path), room, before);
+    await this.roomPeer(room, peer);
     const history: ChatLine[] = [];
     for (const event of events) {
       const line = await this.decode(room, peer, event);
       if (line) history.push(line);
     }
+    await this.roomPeer(room, peer);
     return {lines: history, next};
   }
 
   async openLive(room: string, expectedPeer?: string) {
     const anchor = await this.sync();
-    const peer = await this.roomPeer(room);
-    if (expectedPeer !== undefined && peer !== expectedPeer) throw new HeartwoodError('chatPeerChanged');
+    const peer = await this.roomPeer(room, expectedPeer);
     const request = (path: string) => this.http.request('GET', path);
     const timeline = new LiveTimeline(anchor);
     const {events} = await readHistoryPage(request, room, anchor);
+    await this.roomPeer(room, peer);
     const decode = (event: HistoryEvent) => this.decode(room, peer, event);
     const initial = await timeline.initial(events, decode);
+    await this.roomPeer(room, peer);
     let catchingUp = false;
     return {
       initial,
@@ -526,8 +524,9 @@ export class Heartwood {
       retry: () => this.retrySend(room, peer),
       refresh: () => timeline.poll(async from => {
         const until = await this.sync();
-        if (await this.roomPeer(room) !== peer) throw new HeartwoodError('chatPeerChanged');
+        await this.roomPeer(room, peer);
         const page = await readForwardPage(request, room, from, until);
+        await this.roomPeer(room, peer);
         catchingUp = page.next !== undefined && page.next !== until;
         return page;
       }, decode),

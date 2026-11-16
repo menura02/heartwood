@@ -2,6 +2,12 @@
 
 # Değişiklik kaydı
 
+## 0.6.2
+
+- Açık sohbet geçmişini ilk karşı tarafa bağla, profil anahtar deposu yollarını doğrula ve kesintiye uğrayan profil kaldırmayı güvenle toparla.
+- Saklanan geçmiş imleçlerini sınırla ve Synapse testlerinin ağa erişmesi için geçici laboratuvar bağlamı iste.
+- Açılmış sürüm arşivinde paketlenmiş istemci içe aktarımını doğrula.
+
 ## 0.6.1
 
 - Matrix yanıtları işlenmeden önce doğrulanır ve yanıt gövdesinin okunması boyutla sınırlanır.

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { readHistoryPage } from '../src/history.ts';
+import { readForwardPage, readHistoryPage } from '../src/history.ts';
 
 const room = '!room/+?:localhost';
 const event = (id: string) => ({type: 'm.room.encrypted', event_id: id, sender: '@bob:localhost', content: {}});
@@ -47,4 +47,25 @@ test('history validates encrypted event identifiers and timestamps while retaini
     {...encrypted, sender: '@alice:example.invalid/path'}, {...encrypted, origin_server_ts: 1.5}]) {
     await assert.rejects(request([extension, invalid]), {code: 'invalidHistoryPage'});
   }
+});
+
+test('history limits opaque cursors by UTF-8 bytes before requesting or storing a page', async () => {
+  const boundary = 'ş'.repeat(512);
+  const large = boundary + 'x';
+  const received = await readHistoryPage(async path => {
+    assert.equal(new URL(path, 'https://fixture.invalid/').searchParams.get('from'), boundary);
+    return {start: boundary, end: 'next', chunk: []};
+  }, room, boundary);
+  assert.equal(received.next, 'next');
+  for (const [start, end] of [[large, 'next'], ['start', large], ['start', 'a'.repeat(1025)]]) {
+    await assert.rejects(readHistoryPage(async () => ({start, end, chunk: []}), room), {code: 'invalidHistoryPage'});
+  }
+  let requests = 0;
+  const request = async () => { requests++; return {start: 'a', chunk: []}; };
+  await assert.rejects(readHistoryPage(request, room, large), {code: 'invalidHistoryPage'});
+  await assert.rejects(readHistoryPage(request, room, '\uD800'), {code: 'invalidHistoryPage'});
+  await assert.rejects(readForwardPage(request, room, large, 'b'), {code: 'invalidHistoryPage'});
+  await assert.rejects(readForwardPage(request, room, 'a', large), {code: 'invalidHistoryPage'});
+  await assert.rejects(readForwardPage(request, room, large, large), {code: 'invalidHistoryPage'});
+  assert.equal(requests, 0);
 });

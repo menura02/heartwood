@@ -106,7 +106,7 @@ async function liveChat(client: Heartwood, reader: Interface, input: TerminalInp
 
   function loadHistory(older: boolean): void {
     if (historyPending) { show([ui.text('historyBusy')]); return; }
-    historyPending = (older ? history.older(room, active) : history.latest(room, active))
+    historyPending = (older ? history.older(room, active, live.peer) : history.latest(room, active, live.peer))
       .then(result => {
         if (active.aborted) return;
         const lines = session.display(result.lines);
@@ -220,8 +220,9 @@ async function showGuide(client: Heartwood, signal: AbortSignal, ui: Translator)
 
 async function shell(client: Heartwood, input: TerminalInput, closed: AbortController, ui: Translator,
   guided = false): Promise<void> {
-  const history = new HistoryNavigator((room, before, signal) => signal ?
-    client.http.withSignal(signal, () => client.historyPage(room, before)) : client.historyPage(room, before));
+  const history = new HistoryNavigator((room, before, signal, expectedPeer) => signal ?
+    client.http.withSignal(signal, () => client.historyPage(room, before, expectedPeer)) :
+    client.historyPage(room, before, expectedPeer));
   const conversations = new ConversationList();
   const reader = createInterface({ input, output: stdout, terminal: true, historySize: 0 });
   const openChat = (room: string, peer?: string) =>
