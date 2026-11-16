@@ -10,16 +10,20 @@ export class SessionUnread {
     for (const [room, update] of Object.entries(rooms)) {
       const events = Array.isArray(update?.timeline?.events) ? update.timeline.events : [];
       const state = Array.isArray(update?.state?.events) ? update.state.events : [];
-      const joined = [...state, ...events].some(event =>
+      const isJoin = (event: TimelineEvent | undefined) =>
         event?.type === 'm.room.member' && event.state_key === self && event.content?.membership === 'join' &&
-        event.unsigned?.prev_content?.membership !== 'join');
-      for (const event of events) {
+        event.unsigned?.prev_content?.membership !== 'join';
+      const joinIndex = events.findIndex(isJoin);
+      const joinedWithoutTimelineBoundary = joinIndex === -1 && state.some(isJoin);
+      for (const [index, event] of events.entries()) {
         const id = event?.event_id;
         if (event?.type !== 'm.room.encrypted' || typeof id !== 'string' || !id || id.length > 1024 ||
             typeof event.sender !== 'string' || !event.sender || event.sender.length > 255 ||
             event.sender === self || this.seen.has(id)) continue;
         this.remember(id);
-        if (baseline || joined) continue;
+        // A join state without a timeline position makes the whole batch ambiguous; with a
+        // timeline boundary, only events up to the join are backfill.
+        if (baseline || joinedWithoutTimelineBoundary || index <= joinIndex) continue;
         const pending = this.rooms.get(room) ?? new Map<string, string>();
         pending.set(id, event.sender);
         if (pending.size > 256) pending.delete(pending.keys().next().value!);

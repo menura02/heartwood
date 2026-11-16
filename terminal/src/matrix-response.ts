@@ -12,7 +12,7 @@ export function isRecord(value: unknown): value is JsonObject {
 }
 
 export function isToken(value: unknown): value is string {
-  return typeof value === 'string' && value.length > 0 && !/[\p{Cc}]/u.test(value);
+  return typeof value === 'string' && value.length > 0 && value.isWellFormed() && !/[\p{Cc}]/u.test(value);
 }
 
 function isServerName(value: string): boolean {

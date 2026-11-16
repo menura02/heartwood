@@ -4,7 +4,7 @@ import { RequestType } from '@matrix-org/matrix-sdk-crypto-nodejs';
 import { Heartwood } from '../src/client.ts';
 import { formatError } from '../src/failures.ts';
 import { MatrixHttp, login, register } from '../src/matrix.ts';
-import { isKeyClaim, isKeyQuery, isKeyUpload, isSyncResponse } from '../src/matrix-response.ts';
+import { isKeyClaim, isKeyQuery, isKeyUpload, isSyncResponse, isToken } from '../src/matrix-response.ts';
 import { megolm } from '../src/policy.ts';
 import { SendAttempts } from '../src/send-attempts.ts';
 import { SyncOwner } from '../src/sync-owner.ts';
@@ -151,6 +151,16 @@ test('sync validates consumed sections while preserving unknown extensions and e
     });
     await assert.rejects(client.sync(), {code: 'invalidSyncResponse'});
   }
+});
+
+test('opaque tokens reject unpaired surrogates while accepting valid supplementary Unicode', () => {
+  const invalid = String.fromCharCode(0xd800);
+  const valid = 'cursor-🪵';
+  assert.equal(isToken(invalid), false);
+  assert.equal(isSyncResponse({next_batch: invalid}), false);
+  assert.equal(isToken(valid), true);
+  assert.equal(isSyncResponse({next_batch: valid}), true);
+  assert.equal(new URLSearchParams({since: valid}).get('since'), valid);
 });
 
 test('invalid membership state never reaches key verification or send authorization', async () => {

@@ -163,3 +163,18 @@ test('session unread ignores baseline, join backfill, self, and duplicates, and 
   unread.observe({'!one': timeline(event('catch-up'))}, 'self', false);
   assert.equal(unread.has('!one', 'peer'), false);
 });
+
+test('session unread counts peer messages after a join event in the same timeline batch', () => {
+  const unread = new SessionUnread();
+  unread.observe({'!joined': {timeline: {events: [
+    {type: 'm.room.encrypted', event_id: '$before-join', sender: 'peer'},
+    {type: 'm.room.member', state_key: 'self', content: {membership: 'join'},
+      unsigned: {prev_content: {membership: 'invite'}}},
+    {type: 'm.room.encrypted', event_id: '$after-join', sender: 'peer'},
+  ]}}}, 'self', false);
+  assert.equal(unread.has('!joined', 'peer'), true);
+  unread.displayed('!joined', [{id: '$before-join', body: 'backfill'}]);
+  assert.equal(unread.has('!joined', 'peer'), true);
+  unread.displayed('!joined', [{id: '$after-join', body: 'visible'}]);
+  assert.equal(unread.has('!joined', 'peer'), false);
+});
