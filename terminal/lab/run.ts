@@ -119,12 +119,13 @@ export async function startLab(port: number, fast = false) {
       finished = true;
       resolve(code);
     }));
-    stop = async () => {
+    let stopping: Promise<void> | undefined;
+    stop = () => stopping ??= (async () => {
       child.stdin.end();
       await Promise.race([exited, wait(15_000, undefined, {ref: false})]);
       if (!finished) throw new HeartwoodError('labStopUnconfirmed');
       await removeLabWorkspace(dirname(lab), directory, owner);
-    };
+    })();
     const deadline = Date.now() + 30_000;
     let ready = false;
     while (!finished && Date.now() < deadline) {

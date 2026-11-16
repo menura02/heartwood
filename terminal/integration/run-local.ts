@@ -14,7 +14,10 @@ process.once('SIGTERM', interrupt);
 try {
   await withDisposableLab(Number(process.env.HEARTWOOD_TEST_PORT ?? '18019'), async lab => {
     if (shutdown.signal.aborted) return;
-    void lab.exited.then(() => shutdown.abort());
+    let testFinished = false;
+    // Stop Synapse as soon as the in-process test run is complete. Its child process
+    // otherwise keeps the parent event loop alive, while lab cleanup waits for run().
+    void lab.exited.then(() => { if (!testFinished) shutdown.abort(); });
     let passed = false;
     const tests = run({
       files: [fileURLToPath(new URL('./synapse.test.ts', import.meta.url))],
@@ -22,8 +25,10 @@ try {
       isolation: 'none',
       signal: shutdown.signal,
       setup: reporter => {
-        reporter.on('test:summary', ({success, counts}) => {
-          passed = success && counts.passed > 0;
+        reporter.on('test:complete', ({details}) => {
+          testFinished = true;
+          passed = details.passed;
+          void lab.stop().catch(() => {});
         });
       },
     });
