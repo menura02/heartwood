@@ -74,14 +74,14 @@ test('HTTP cancellation reaches the active fetch and is distinct from a network 
 });
 
 test('a truncated authorization response still pauses automatic reads', async t => {
-  t.mock.method(globalThis, 'fetch', async () => ({
-    status: 403,
-    async json() { throw new TypeError('truncated response'); },
-  }));
+  t.mock.method(globalThis, 'fetch', async () => new Response(new ReadableStream({
+    start(controller) { controller.error(new TypeError('truncated response')); },
+  }), {status: 403}));
   const http = new MatrixHttp('http://127.0.0.1:18008');
   await assert.rejects(http.request('GET', 'sync'), (error: unknown) => {
     assert.ok(error instanceof MatrixFailure);
     assert.equal(error.status, 403);
+    assert.equal(error.bodyFailure, 'matrixBodyInterrupted');
     assert.deepEqual(new LiveRecovery().fail(error), {status: 'paused'});
     return true;
   });

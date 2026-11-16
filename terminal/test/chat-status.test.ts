@@ -96,6 +96,31 @@ test('send checks a replacement device after an allowed status and status does n
   await assert.rejects(client.send(room, 'test'), {code: 'trustedDeviceChanged'});
 });
 
+test('retry rechecks membership and device trust before it can reuse the original payload', async () => {
+  const devices = [own, peer];
+  const roomState = [...state];
+  const {client, sends} = fixture({devices, roomState});
+  const prepared = {path: 'original transaction', ciphertext: 'original ciphertext', recipient: peer, token: 'test token'};
+  const submissions: object[] = [];
+  Object.assign(client, {http: {token: prepared.token}, submitSend: async (item: object) => {
+    submissions.push(item);
+    return '$accepted';
+  }});
+  assert.deepEqual(await sends.start(room, async () => prepared, async () => { throw new Error('response lost'); }),
+    {status: 'uncertain'});
+  const departed = roomState.pop();
+  await assert.rejects(client.retrySend(room, peer.user), {code: 'invalidRoomMembership'});
+  assert.ok(departed);
+  roomState.push(departed);
+  devices[1] = {...peer, device: 'NEW'};
+  await assert.rejects(client.retrySend(room, peer.user), {code: 'trustedDeviceChanged'});
+  assert.equal(sends.status(room), 'uncertain');
+  assert.deepEqual(submissions, []);
+  devices[1] = peer;
+  assert.deepEqual(await client.retrySend(room, peer.user), {status: 'accepted', eventId: '$accepted'});
+  assert.equal(submissions[0], prepared);
+});
+
 test('status distinguishes an in-flight initial send from a retry and agrees with the slot guard', async () => {
   const {client, sends} = fixture();
   const submit = Promise.withResolvers<string>();

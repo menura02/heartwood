@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { spawn, spawnSync } from 'node:child_process';
+import { once } from 'node:events';
+import { mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { inspectProfile, listProfiles, removeProfile } from '../src/profile-management.ts';
@@ -139,6 +140,157 @@ test('concurrent open and removal cannot delete the profile held by the opener',
   } finally {
     await rm(root, {recursive: true, force: true});
   }
+});
+
+test('another process cannot reopen a profile between lock retirement and quarantine', {timeout: 15_000}, async context => {
+  const root = await mkdtemp(join(tmpdir(), 'heartwood-retirement-race-'));
+  context.after(() => rm(root, {recursive: true, force: true}));
+  const original = await Profile.open('alice', origin, 'alice', root);
+  await original.close();
+  const worker = spawn(process.execPath, ['--input-type=module', '-e', `
+    import fs from 'node:fs/promises';
+    import { syncBuiltinESMExports } from 'node:module';
+    import { basename } from 'node:path';
+    import { removeProfile } from ${JSON.stringify(new URL('../src/profile-management.ts', import.meta.url).href)};
+    const rename = fs.rename;
+    fs.rename = async (source, target) => {
+      if (basename(source) === 'alice') {
+        process.send('retired');
+        await new Promise(resolve => process.once('message', resolve));
+      }
+      return rename(source, target);
+    };
+    syncBuiltinESMExports();
+    await removeProfile('alice', process.argv[1]);
+    process.disconnect();
+  `, root], {stdio: ['ignore', 'ignore', 'inherit', 'ipc']});
+  const exit = once(worker, 'exit');
+  try {
+    await Promise.race([
+      once(worker, 'message').then(([message]) => assert.equal(message, 'retired')),
+      exit.then(() => { throw new Error('Removal fixture stopped before quarantine'); }),
+    ]);
+    // The per-profile OS lock is already released, while the cross-process operation gate is still held.
+    await assert.rejects(Profile.open('alice', origin, 'alice', root), {code: 'profileInUse'});
+    assert.equal((await inspectProfile('alice', root)).record?.device, original.data.device);
+    worker.send('continue');
+    const [code] = await exit;
+    assert.equal(code, 0);
+    const replacement = await Profile.open('alice', origin, 'alice', root);
+    try { assert.notEqual(replacement.data.device, original.data.device); }
+    finally { await replacement.close(); }
+  } finally {
+    if (worker.exitCode === null && worker.signalCode === null) worker.kill('SIGKILL');
+    await exit;
+  }
+});
+
+test('interrupted removal preserves the authoritative profile at each transition', {timeout: 25_000}, async context => {
+  for (const stage of ['before retirement', 'before quarantine', 'after quarantine', 'during cleanup']) {
+    await context.test(stage, async subtest => {
+      const temporary = await realpath(tmpdir());
+      const root = await mkdtemp(join(temporary, 'heartwood-removal-interrupted-'));
+      subtest.after(async () => {
+        const path = await realpath(root);
+        assert.equal(dirname(path), temporary);
+        await rm(path, {recursive: true, force: true});
+      });
+      const original = await Profile.open('alice', origin, 'alice', root);
+      await original.close();
+      const {record} = await inspectProfile('alice', root);
+      assert.ok(record);
+      const keys = join(original.path, 'keys');
+      await mkdir(keys);
+      await writeFile(join(keys, 'fixture'), 'preserve');
+      const worker = spawn(process.execPath, ['--input-type=module', '-e', `
+        import fs from 'node:fs/promises';
+        import { syncBuiltinESMExports } from 'node:module';
+        import { basename, dirname, join } from 'node:path';
+        import { removeProfile } from ${JSON.stringify(new URL('../src/profile-management.ts', import.meta.url).href)};
+        const [, root, stage] = process.argv;
+        const {rename, unlink, rm} = fs;
+        async function stop() {
+          process.send(stage);
+          await new Promise(resolve => process.once('message', resolve));
+        }
+        fs.unlink = async path => {
+          if (stage === 'before retirement' && basename(path) === 'sqlite-owner' &&
+              basename(dirname(path)) === 'in-use') await stop();
+          return unlink(path);
+        };
+        fs.rename = async (source, target) => {
+          if (stage === 'before retirement' && basename(source) === 'sqlite-owner' &&
+              basename(dirname(source)) === 'in-use') await stop();
+          const quarantine = basename(source) === 'alice';
+          if (quarantine && stage === 'before quarantine') await stop();
+          await rename(source, target);
+          if (quarantine && stage === 'after quarantine') await stop();
+        };
+        fs.rm = async (path, options) => {
+          if (stage === 'during cleanup' && basename(path).startsWith('.removed-')) {
+            await unlink(join(path, 'profile', 'profile.json'));
+            await stop();
+          }
+          return rm(path, options);
+        };
+        syncBuiltinESMExports();
+        await removeProfile('alice', root);
+        process.disconnect();
+      `, root, stage], {stdio: ['ignore', 'ignore', 'inherit', 'ipc']});
+      const exit = once(worker, 'exit');
+      try {
+        await Promise.race([
+          once(worker, 'message', {signal: AbortSignal.timeout(4000)}).then(([message]) => assert.equal(message, stage)),
+          exit.then(() => { throw new Error('Removal worker exited before the expected barrier'); }),
+        ]);
+        assert.ok(worker.kill('SIGKILL'));
+        await exit;
+      } finally {
+        if (worker.exitCode === null && worker.signalCode === null) worker.kill('SIGKILL');
+        await exit;
+      }
+      const containers = (await readdir(root)).filter(name => name.startsWith('.removed-'));
+      assert.equal(containers.length, 1);
+      const beforeMove = stage === 'before retirement' || stage === 'before quarantine';
+      const preserved = beforeMove ? join(keys, 'fixture') : join(root, containers[0], 'profile', 'keys', 'fixture');
+      assert.equal(await readFile(preserved, 'utf8'), 'preserve');
+
+      if (!beforeMove) await assert.rejects(removeProfile('alice', root, record), {code: 'profileNotFound'});
+      const reopened = await Profile.open('alice', origin, 'alice', root);
+      try {
+        await assert.rejects(removeProfile('alice', root, record), {code: 'profileInUse'});
+        if (beforeMove) assert.equal(reopened.data.device, record.device);
+        else assert.notEqual(reopened.data.device, record.device);
+      } finally { await reopened.close(); }
+      assert.equal(await readFile(preserved, 'utf8'), 'preserve');
+      if (beforeMove) {
+        await removeProfile('alice', root, record);
+        await assert.rejects(removeProfile('alice', root, record), {code: 'profileNotFound'});
+      } else {
+        await assert.rejects(removeProfile('alice', root, record), {code: 'profileUnsafePath'});
+        assert.equal(await readFile(preserved, 'utf8'), 'preserve');
+      }
+    });
+  }
+});
+
+test('a malformed retirement marker does not unlock the profile or authorize removal', async context => {
+  const temporary = await realpath(tmpdir());
+  const root = await mkdtemp(join(temporary, 'heartwood-retirement-invalid-'));
+  context.after(async () => {
+    const path = await realpath(root);
+    assert.equal(dirname(path), temporary);
+    await rm(path, {recursive: true, force: true});
+  });
+  const profile = await Profile.open('alice', origin, 'alice', root);
+  await profile.close();
+  const guard = join(profile.path, 'in-use');
+  await mkdir(guard);
+  const marker = join(guard, 'sqlite-removing');
+  await writeFile(marker, 'unknown version');
+  await assert.rejects(Profile.open('alice', origin, 'alice', root), {code: 'profileLockUncertain'});
+  await assert.rejects(removeProfile('alice', root), {code: 'profileLockUncertain'});
+  assert.equal(await readFile(marker, 'utf8'), 'unknown version');
 });
 
 test('rejects traversal and preserves unexpected files', async () => {

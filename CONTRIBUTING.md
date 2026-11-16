@@ -38,5 +38,14 @@ To test native Windows ConPTY, run `node integration/run-pty.ts` from Windows Po
 ## Prepare a release
 
 1. Match the version in `terminal/package.json`, its lockfile, and both changelogs. Merge the PR after the Windows and Ubuntu checks and the Linux Synapse job pass. Confirm that CI passes on the resulting `main` commit. [CI workflow](.github/workflows/terminal.yml)
-2. Verify that the matching tag is unused both locally and remotely. Tag the tested commit and push that tag. The release workflow verifies the tag and commit, reruns CI, and prepares a draft with the source ZIP, checksum and bilingual release notes. It stops if a draft or release already exists for that tag. [Release workflow](.github/workflows/release.yml)
+2. Verify that the matching tag is unused both locally and remotely. Tag the tested commit and push that tag. The release workflow verifies the tag and commit, reruns CI, and tests the extracted ZIP on Windows and Ubuntu before preparing a draft with its checksum and bilingual notes. It stops if a draft or release already exists for that tag. [Release workflow](.github/workflows/release.yml)
 3. Review the draft’s commit and notes. Download and [verify the ZIP](README.md#verify-a-downloaded-zip), then install from the extracted package before publishing in GitHub.
+
+To run the release package check locally, use the current version and a fresh output directory. Run these commands from the repository root with Python and Node.js 24 on PATH.
+
+```sh
+python -B terminal/ci/release.py package v0.6.2 terminal/.lab/release-check
+python -B terminal/ci/smoke_release.py terminal/.lab/release-check/heartwood-terminal.zip
+```
+
+The smoke test installs from the lockfile in an isolated directory, checks help and offline `doctor` in both languages, imports the packaged client entry point, and migrates synthetic legacy profile metadata with a marker in place of an SDK key database. The default integration command starts its own disposable lab; invoking the Synapse test directly fails before network access because the in-process lab context is absent.

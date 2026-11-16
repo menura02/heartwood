@@ -1,9 +1,8 @@
-import { lstat, mkdtemp, open, readdir, realpath, rename, rm, rmdir } from 'node:fs/promises';
+import { lstat, mkdtemp, readdir, realpath, rename, rm, rmdir } from 'node:fs/promises';
 import { dirname, join, relative } from 'node:path';
 import { HeartwoodError } from './failures.ts';
-import { matrixOrigin } from './policy.ts';
-import { acquireProfileLock, restoreProfileGuard, withProfileGate } from './profile-lock.ts';
-import { defaultProfileRoot, existingProfileDirectory, existingProfileRoot, validProfileName } from './profile.ts';
+import { acquireProfileLock, withProfileGate } from './profile-lock.ts';
+import { defaultProfileRoot, existingProfileDirectory, existingProfileRoot, readProfileData, validProfileName } from './profile.ts';
 
 export interface ProfileRecord {
   origin: string;
@@ -17,30 +16,10 @@ interface ProfileEntry {
 }
 
 async function readRecord(directory: string): Promise<ProfileRecord | undefined> {
-  try {
-    const path = join(directory, 'profile.json');
-    const before = await lstat(path);
-    const limit = 1024 * 1024;
-    if (!before.isFile() || before.nlink !== 1 || before.size > limit) return;
-    const file = await open(path, 'r');
-    try {
-      const current = await file.stat();
-      if (before.dev !== current.dev || before.ino !== current.ino || !current.isFile() || current.nlink !== 1) return;
-      const {buffer, bytesRead} = await file.read(Buffer.alloc(limit + 1));
-      if (bytesRead > limit) return;
-      const {origin, username, device, pins, blocked} = JSON.parse(buffer.subarray(0, bytesRead).toString('utf8')) as
-        Partial<ProfileRecord> & {pins?: unknown; blocked?: unknown};
-      if (typeof origin !== 'string' || matrixOrigin(origin) !== origin ||
-          typeof username !== 'string' || !/^[a-z0-9._=-]{1,64}$/.test(username) ||
-          typeof device !== 'string' || !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(device) ||
-          !pins || typeof pins !== 'object' || Array.isArray(pins) || !Array.isArray(blocked)) return;
-      return {origin, username, device};
-    } finally {
-      await file.close();
-    }
-  } catch {
-    return undefined;
-  }
+  const record = await readProfileData(directory).catch(() => undefined);
+  if (!record) return undefined;
+  const {origin, username, device} = record.data;
+  return {origin, username, device};
 }
 
 async function profileEntry(name: string, directory: string): Promise<ProfileEntry> {
@@ -109,12 +88,10 @@ export async function removeProfile(name: string, root = defaultProfileRoot(), e
       const container = await mkdtemp(join(canonical, '.removed-'));
       try {
         await release(true);
-        await rename(directory, join(container, 'profile')).catch(async error => {
-          if (await existingProfileDirectory(canonical, name) === directory) await restoreProfileGuard(directory);
-          throw error;
-        });
+        await rename(directory, join(container, 'profile'));
       } catch (error) {
-        await rmdir(container);
+        // Keep the recognizable guard until the next locked operation can restore it.
+        await rmdir(container).catch(() => {});
         throw error;
       }
       return container;

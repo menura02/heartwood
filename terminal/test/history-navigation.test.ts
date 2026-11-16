@@ -65,3 +65,33 @@ test('starting and overlapping reads are guarded and failure releases the lock',
   assert.equal((await nav.latest('a')).page, 1);
   assert.equal(calls, 2);
 });
+
+test('a rejected over-budget cursor leaves the last successful page available for retry', async () => {
+  const calls: Array<string | undefined> = [];
+  const replies = ['first', 'ş'.repeat(513), 'last'];
+  const nav = new HistoryNavigator(async (_room, before) => {
+    calls.push(before);
+    return {lines: [], next: replies.shift()};
+  });
+  await nav.latest('a');
+  await assert.rejects(nav.older('a'), {code: 'invalidHistoryPage'});
+  assert.equal((await nav.older('a')).page, 2);
+  assert.deepEqual(calls, [undefined, 'first', 'first']);
+});
+
+test('the cursor byte budget evicts the least recently used room as a whole', async () => {
+  let id = 0;
+  const nav = new HistoryNavigator(async () => ({lines: [], next: String(++id).padStart(1024, 'x')}));
+  for (const room of ['a', 'b']) {
+    await nav.latest(room);
+    for (let i = 1; i < 128; i++) await nav.older(room);
+  }
+  await nav.older('a'); // Room a is now newer than b and still occupies 128 KiB.
+  await nav.latest('c');
+  await assert.rejects(nav.older('b'), {code: 'historyNotOpen'});
+  assert.equal((await nav.older('a')).page, 130);
+  assert.equal((await nav.older('c')).page, 2);
+  for (let i = 0; i < 130; i++) await nav.latest(`small-${i}`);
+  await assert.rejects(nav.older('small-0'), {code: 'historyNotOpen'});
+  assert.equal((await nav.older('small-129')).page, 2);
+});

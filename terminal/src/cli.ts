@@ -1,26 +1,23 @@
 import { createInterface } from 'node:readline/promises';
 import type { Interface } from 'node:readline/promises';
-import { clearScreenDown, cursorTo, moveCursor } from 'node:readline';
 import { stdin, stdout } from 'node:process';
 import { Writable } from 'node:stream';
 import type { Heartwood } from './client.ts';
 import { MatrixHttp, login, register } from './matrix.ts';
 import { deviceCode, formatDeviceCode, matrixOrigin, safeText } from './policy.ts';
 import type { Profile } from './profile.ts';
-import type { ChatLine } from './chat-feed.ts';
 import { HistoryNavigator } from './history-navigation.ts';
 import type { SendResult } from './send-attempts.ts';
 import { ConversationList } from './conversation-list.ts';
 import { LiveRecovery } from './connection.ts';
 import { TerminalInput } from './terminal-input.ts';
-import { available, commandName, commandUsage, completeCommand, startupMode, validArguments, verificationCode } from './commands.ts';
-import type { CommandContext } from './commands.ts';
-import { formatError, HeartwoodError, MatrixFailure } from './failures.ts';
+import { available, commandName, commandUsage, startupMode, validArguments, verificationCode } from './commands.ts';
+import { formatError, HeartwoodError } from './failures.ts';
 import { selectLanguage, translator } from './locale.ts';
 import type { Language, Translator } from './locale.ts';
 import { diagnose } from './doctor.ts';
 import { ChatSession } from './chat-session.ts';
-import type { HistoryResult } from './history-navigation.ts';
+import { abovePrompt, chatText, commandQuestion, historyOutput, searchOutput, statusOutput } from './terminal-view.ts';
 
 type CliFailure = 'invalidCommand' | 'interactiveRequired' | 'passphraseMismatch' | 'acceptFirst' | 'chooseConversation';
 class CliError extends Error {
@@ -34,91 +31,6 @@ class CliError extends Error {
 
 function errorText(error: unknown, ui: Translator): string {
   return safeText(error instanceof CliError ? ui.text(error.key) : formatError(error, ui.language));
-}
-
-function chatText(line: ChatLine, ui: Translator): string {
-  return safeText(`${line.sender}  ${line.body ?? ui.text('undecryptable')}`);
-}
-
-function abovePrompt(reader: Interface, lines: string[], waiting: boolean): void {
-  const rows = waiting ? reader.getCursorPos().rows : 0;
-  if (waiting) {
-    moveCursor(stdout, 0, -rows);
-    cursorTo(stdout, 0);
-    clearScreenDown(stdout);
-  }
-  console.log(lines.join('\n'));
-  if (waiting) {
-    // Readline moves up from the draft's cursor row before redrawing it.
-    if (rows > 0) stdout.write('\n'.repeat(rows));
-    reader.prompt(true);
-  }
-}
-
-async function commandQuestion(reader: Interface, input: TerminalInput, prompt: string, context: CommandContext,
-  signal: AbortSignal): Promise<string> {
-  input.complete = () => {
-    const [candidates, prefix] = completeCommand(reader.line, reader.cursor, context);
-    if (candidates.length === 1) reader.write(candidates[0].slice(prefix.length));
-    else if (candidates.length > 1) abovePrompt(reader, candidates, true);
-  };
-  try { return await reader.question(prompt, {signal}); }
-  finally { input.complete = undefined; }
-}
-
-function historyOutput(result: HistoryResult, lines: ChatLine[], ui: Translator, chat = false): string[] {
-  return [
-    ui.text('page', {page: result.page}),
-    ...(lines.length ? lines.map(line => chatText(line, ui)) :
-      [ui.text(result.lines.length ? 'historyAlreadyShown' : 'emptyPage')]),
-    ui.text(result.hasMore ? (chat ? 'olderInChat' : 'olderAvailable') : 'noOlder'),
-  ];
-}
-
-function searchOutput(session: ChatSession, ui: Translator, move = 0): string[] {
-  const result = session.results(move);
-  if (!result) return [ui.text('searchFirst')];
-  const header = ui.text('searchScope');
-  if (!result.pages) return [header, ui.text('searchEmpty')];
-  return [
-    header, ui.text('searchPage', {page: result.page, pages: result.pages}),
-    ...result.lines.map(line => safeText(`${line.timestamp === undefined ? ui.text('timeUnknown') :
-      new Date(line.timestamp).toISOString()} · ${chatText(line, ui)}`)),
-    ...(result.expired ? [ui.text('searchEvicted')] : []),
-  ];
-}
-
-async function detailedStatusOutput(client: Heartwood, room: string, ui: Translator,
-  expectedPeer?: string, signal?: AbortSignal): Promise<string[]> {
-  const check = () => client.detailedStatus(room, expectedPeer);
-  const report = await (signal ? client.http.withSignal(signal, check) : check());
-  const policy = {pass: 'statusPassed', fail: 'statusFailed', unknown: 'statusUnknown'} as const;
-  const trust = {verified: 'deviceVerified', unverified: 'deviceUnverified', changed: 'statusChanged',
-    unknown: 'statusUnknown'} as const;
-  const sending = {allowed: 'statusAllowed', blocked: 'statusBlocked', unknown: 'statusUnknown'} as const;
-  const pending = {none: 'statusNone', busy: 'statusBusy', uncertain: 'statusUncertain', retrying: 'retrying'} as const;
-  const unknown = ui.text('statusUnknown');
-  const lines = [
-    ui.text('statusConnection', {state: ui.text(report.connection === 'connected' ? 'statusReachable' : 'statusFailed'),
-      time: new Date(report.checkedAt).toISOString()}),
-    ui.text('statusPeer', {account: report.peer ?? unknown, device: report.device ?? unknown}),
-    ui.text('statusVerification', {state: ui.text(trust[report.verification])}),
-    ui.text('statusEncryption', {state: ui.text(policy[report.encryption])}),
-    ui.text('statusMembership', {state: ui.text(policy[report.membership])}),
-    ui.text('statusSending', {state: ui.text(sending[report.sending])}),
-    ui.text('statusPending', {state: ui.text(pending[report.pending])}),
-  ];
-  if (report.reason) {
-    const code = report.reason instanceof HeartwoodError ? report.reason.code : undefined;
-    const auth = report.reason instanceof MatrixFailure && report.reason.status === 401;
-    const next = auth ? 'statusSignIn' : code === 'deviceNotVerified' ? 'statusVerify' :
-      code === 'trustedDeviceChanged' || report.verification === 'changed' ? 'statusCheckDevice' :
-        report.pending === 'uncertain' ? 'statusRetry' :
-          report.pending === 'busy' || report.pending === 'retrying' ? 'statusWait' :
-            report.connection === 'failed' ? 'statusCheckConnection' : 'statusReview';
-    lines.push(errorText(report.reason, ui), ui.text(next));
-  }
-  return lines.map(safeText);
 }
 
 async function sendWithStatus(ui: Translator, action: () => Promise<SendResult>, retry = false): Promise<void> {
@@ -149,8 +61,11 @@ async function discardPending(client: Heartwood, reader: Interface, room: string
 
 async function liveChat(client: Heartwood, reader: Interface, input: TerminalInput, room: string, signal: AbortSignal,
   ui: Translator, history: HistoryNavigator, expectedPeer?: string): Promise<boolean> {
-  const live = await client.openLive(room, expectedPeer);
-  if (signal.aborted) return true;
+  const lifetime = new AbortController();
+  const active = AbortSignal.any([signal, lifetime.signal]);
+  const scoped = <T>(action: () => Promise<T>) => client.http.withSignal(active, action);
+  const live = await scoped(() => client.openLive(room, expectedPeer));
+  if (active.aborted) return true;
   const session = new ChatSession();
   console.log(ui.text('liveOpened'));
   const initial = session.display(live.initial);
@@ -163,18 +78,17 @@ async function liveChat(client: Heartwood, reader: Interface, input: TerminalInp
   let pending: Promise<void> | undefined;
   let historyPending: Promise<void> | undefined;
   const recovery = new LiveRecovery();
-  const polling = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
   let delay: number | undefined = 1500;
   function show(lines: string[]): void {
-    if (!lines.length || signal.aborted || polling.signal.aborted) return;
+    if (!lines.length || active.aborted) return;
     abovePrompt(reader, lines, waiting);
   }
 
   async function refresh(): Promise<void> {
     try {
-      const fetched = await client.http.withSignal(polling.signal, live.refresh);
-      if (signal.aborted || polling.signal.aborted) return;
+      const fetched = await scoped(live.refresh);
+      if (active.aborted) return;
       const displayed = session.display(fetched);
       const lines = displayed.length ? [ui.text('newMessages'), ...displayed.map(line => chatText(line, ui))] : [];
       const update = recovery.success(live.catchingUp);
@@ -183,7 +97,7 @@ async function liveChat(client: Heartwood, reader: Interface, input: TerminalInp
       show(lines);
       client.unread.displayed(room, displayed);
     } catch (error) {
-      if (polling.signal.aborted || signal.aborted) return;
+      if (active.aborted) return;
       const update = recovery.fail(error);
       delay = update.delay;
       if (update.status) show([ui.text(update.status), errorText(error, ui)]);
@@ -192,19 +106,20 @@ async function liveChat(client: Heartwood, reader: Interface, input: TerminalInp
 
   function loadHistory(older: boolean): void {
     if (historyPending) { show([ui.text('historyBusy')]); return; }
-    historyPending = (older ? history.older(room, polling.signal) : history.latest(room, polling.signal))
+    historyPending = (older ? history.older(room, active, live.peer) : history.latest(room, active, live.peer))
       .then(result => {
-        if (signal.aborted || polling.signal.aborted) return;
+        if (active.aborted) return;
         const lines = session.display(result.lines);
         show(historyOutput(result, lines, ui, true));
         client.unread.displayed(room, lines);
-      }, error => show([errorText(error, ui)]))
+      })
+      .catch(error => show([errorText(error, ui)]))
       .finally(() => { historyPending = undefined; });
   }
 
   function schedule(): void {
     clearTimeout(timer);
-    if (sending || pending || signal.aborted || polling.signal.aborted || delay === undefined) return;
+    if (sending || pending || active.aborted || delay === undefined) return;
     timer = setTimeout(() => {
       pending = refresh().finally(() => {
         pending = undefined;
@@ -215,9 +130,9 @@ async function liveChat(client: Heartwood, reader: Interface, input: TerminalInp
 
   try {
     schedule();
-    while (!signal.aborted) {
+    while (!active.aborted) {
       waiting = true;
-      const line = await commandQuestion(reader, input, ui.text('chatPrompt'), 'chat', signal).catch(() => '/exit');
+      const line = await commandQuestion(reader, input, ui.text('chatPrompt'), 'chat', active).catch(() => '/exit');
       waiting = false;
       const message = line.trim();
       if (!message) continue;
@@ -243,7 +158,7 @@ async function liveChat(client: Heartwood, reader: Interface, input: TerminalInp
         continue;
       }
       if (command === '/status') {
-        show(await detailedStatusOutput(client, room, ui, live.peer, polling.signal));
+        show(statusOutput(await scoped(() => client.detailedStatus(room, live.peer)), ui));
         continue;
       }
       if (command === '/refresh') {
@@ -256,20 +171,21 @@ async function liveChat(client: Heartwood, reader: Interface, input: TerminalInp
       clearTimeout(timer);
       try {
         await pending;
-        if (signal.aborted) return true;
-        if (command === '/retry') await sendWithStatus(ui, live.retry, true);
+        if (active.aborted) return true;
+        if (command === '/retry') await sendWithStatus(ui, () => scoped(live.retry), true);
         else if (command === '/pending') showPending(client, ui);
-        else if (command === '/discard') await discardPending(client, reader, room, signal, ui);
-        else await sendWithStatus(ui, () => live.send(command === '/send' ? args : message));
-      } catch (error) { console.error(errorText(error, ui)); }
+        else if (command === '/discard') await discardPending(client, reader, room, active, ui);
+        else await sendWithStatus(ui, () => scoped(() => live.send(command === '/send' ? args : message)));
+      } catch (error) { if (!active.aborted) console.error(errorText(error, ui)); }
       finally { sending = false; schedule(); }
     }
     return true;
   } finally {
+    // Stop output immediately and drain chat tasks before the shell opens another room.
+    lifetime.abort();
     clearTimeout(timer);
-    polling.abort();
-    await Promise.all([pending, historyPending]);
-    session.clear();
+    try { await Promise.allSettled([pending, historyPending]); }
+    finally { session.clear(); }
   }
 }
 
@@ -304,8 +220,9 @@ async function showGuide(client: Heartwood, signal: AbortSignal, ui: Translator)
 
 async function shell(client: Heartwood, input: TerminalInput, closed: AbortController, ui: Translator,
   guided = false): Promise<void> {
-  const history = new HistoryNavigator((room, before, signal) => signal ?
-    client.http.withSignal(signal, () => client.historyPage(room, before)) : client.historyPage(room, before));
+  const history = new HistoryNavigator((room, before, signal, expectedPeer) => signal ?
+    client.http.withSignal(signal, () => client.historyPage(room, before, expectedPeer)) :
+    client.historyPage(room, before, expectedPeer));
   const conversations = new ConversationList();
   const reader = createInterface({ input, output: stdout, terminal: true, historySize: 0 });
   const openChat = (room: string, peer?: string) =>
@@ -375,7 +292,7 @@ async function shell(client: Heartwood, input: TerminalInput, closed: AbortContr
             break;
           }
           case '/status': {
-            console.log((await detailedStatusOutput(client, target, ui)).join('\n'));
+            console.log(statusOutput(await client.detailedStatus(target), ui).join('\n'));
             break;
           }
           case '/send': {
@@ -396,7 +313,7 @@ async function shell(client: Heartwood, input: TerminalInput, closed: AbortContr
           case '/exit': return;
           default: console.log(ui.text('unknownCommand'));
         }
-      } catch (error) { console.error(errorText(error, ui)); }
+      } catch (error) { if (!closed.signal.aborted) console.error(errorText(error, ui)); }
     }
   } finally {
     const count = client.pendingSendRooms().length;
@@ -547,13 +464,14 @@ async function main(args: string[], ui: Translator): Promise<void> {
   } catch (error) {
     if (!closed.signal.aborted) throw error;
   } finally {
+    closed.abort();
     stdin.unpipe(input);
     input.destroy();
     stdin.pause();
     if (stdin.isRaw !== wasRaw) stdin.setRawMode(wasRaw);
     if (bracketed) stdout.write('\x1b[?2004l');
     process.off('SIGINT', interrupt);
-    try { client?.close(); }
+    try { await client?.close(); }
     finally { await profile?.close(); }
   }
 }

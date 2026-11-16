@@ -111,8 +111,8 @@ async function run(command: Command & Partial<Init>): Promise<unknown> {
 process.on('message', async (command: Command) => {
   if (command.op === 'close') {
     try {
-      client?.close();
-      await profile?.close();
+      try { await client?.close(); }
+      finally { await profile?.close(); }
       process.send?.({ok: true}, undefined, undefined, () => process.disconnect());
     } catch (error) {
       process.send?.({error: (error as Error).message}, undefined, undefined, () => process.disconnect());
