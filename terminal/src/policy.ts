@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 export interface DeviceIdentity { user: string; device: string; ed: string; curve: string }
 export interface StateEvent { type: string; state_key: string; sender?: string; content: Record<string, unknown> }
 export const megolm = 'm.megolm.v1.aes-sha2';
+export const minimumStorePassphraseLength = 12;
 
 export function matrixOrigin(value: string): string {
   const url = URL.parse(value);

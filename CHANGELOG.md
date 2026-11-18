@@ -2,6 +2,13 @@
 
 # Changelog
 
+## Unreleased
+
+- Ask for the local store passphrase, and its confirmation for a new profile, before registering or signing in. A short or mismatched passphrase is asked again up to three times and no longer leaves a registered account without a local profile.
+- Skip room state and history requests in an idle live chat, so a refresh without room activity sends only the sync request.
+- Explain how to finish a block when the local block was saved but the server update or leaving shared rooms failed.
+- Add a code map to the architecture document.
+
 ## 0.6.2
 
 - Bind open-chat history reads to the original peer, validate profile key-store paths, and recover interrupted profile removal safely.

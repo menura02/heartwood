@@ -6,6 +6,7 @@ import { HistoryNavigator } from '../src/history-navigation.ts';
 import { SessionUnread } from '../src/unread.ts';
 import { Heartwood } from '../src/client.ts';
 import { megolm } from '../src/policy.ts';
+import { RoomActivity } from '../src/room-activity.ts';
 
 test('Tab only completes a whole command token at the cursor in the current context', () => {
   assert.deepEqual(completeCommand('/ide', 4, 'main'), [['/identity'], '/ide']);
@@ -93,7 +94,7 @@ test('live and history reject a replacement peer in the same room without updati
     ['m.room.create', {'m.federate': false}],
   ].map(([type, content]) => ({type, state_key: '', content}));
   const client: Heartwood = Object.assign(Object.create(Heartwood.prototype), {
-    identity: {user: own}, profile: {data: {blocked: []}}, sync: async () => 'anchor',
+    identity: {user: own}, profile: {data: {blocked: []}}, sync: async () => 'anchor', activity: new RoomActivity(),
     roomState: async () => [...settings, member(own), member(peer)],
     http: {request: async (_method: string, path: string) => {
       const from = new URL(path, 'https://fixture.invalid/').searchParams.get('from');
@@ -177,4 +178,67 @@ test('session unread counts peer messages after a join event in the same timelin
   assert.equal(unread.has('!joined', 'peer'), true);
   unread.displayed('!joined', [{id: '$after-join', body: 'visible'}]);
   assert.equal(unread.has('!joined', 'peer'), false);
+});
+
+test('live refresh skips room reads until sync reports room activity or to-device events', async () => {
+  const room = '!room';
+  const own = '@alice:localhost';
+  const peer = '@bob:localhost';
+  const activity = new RoomActivity();
+  const member = (user: string) => ({type: 'm.room.member', state_key: user, content: {membership: 'join'}});
+  const settings = [
+    ['com.heartwood.direct', {version: 1}], ['m.room.encryption', {algorithm: megolm}],
+    ['m.room.join_rules', {join_rule: 'invite'}], ['m.room.history_visibility', {history_visibility: 'joined'}],
+    ['m.room.create', {'m.federate': false}],
+  ].map(([type, content]) => ({type, state_key: '', content}));
+  let token = 0;
+  let reads = 0;
+  let states = 0;
+  let pendingActivity: {rooms: string[]; toDevice: boolean} | undefined;
+  const client: Heartwood = Object.assign(Object.create(Heartwood.prototype), {
+    identity: {user: own}, profile: {data: {blocked: []}}, activity,
+    sync: async () => {
+      if (pendingActivity) activity.observe(pendingActivity.rooms, pendingActivity.toDevice);
+      pendingActivity = undefined;
+      return 'sync' + ++token;
+    },
+    roomState: async () => { states++; return [...settings, member(own), member(peer)]; },
+    http: {request: async () => { reads++; return {start: 'start', chunk: []}; }},
+    decode: async () => undefined,
+  });
+  const live = await client.openLive(room, peer);
+  const opened = {reads, states};
+  await live.refresh();
+  assert.equal(reads, opened.reads + 1, 'the first refresh reads');
+  const first = {reads, states};
+  await live.refresh();
+  await live.refresh();
+  assert.deepEqual({reads, states}, first, 'idle refreshes make no room requests');
+  pendingActivity = {rooms: ['!other'], toDevice: false};
+  await live.refresh();
+  assert.deepEqual({reads, states}, first, 'activity in another room does not read this room');
+  pendingActivity = {rooms: [room], toDevice: false};
+  await live.refresh();
+  assert.equal(reads, first.reads + 1, 'room activity reads the room');
+  await live.refresh();
+  const settled = reads;
+  await live.refresh();
+  assert.equal(reads, settled, 'refreshes become idle again');
+  pendingActivity = {rooms: [], toDevice: true};
+  await live.refresh();
+  assert.equal(reads, settled + 1, 'to-device events retry pending decryption');
+});
+
+test('room activity marks change on room updates, key delivery, and eviction', () => {
+  const activity = new RoomActivity();
+  const idle = activity.mark('!quiet');
+  activity.observe(['!busy'], false);
+  assert.equal(activity.mark('!quiet'), idle);
+  const busy = activity.mark('!busy');
+  activity.observe([], true);
+  assert.notEqual(activity.mark('!busy'), busy);
+  assert.notEqual(activity.mark('!quiet'), idle);
+  const quiet = activity.mark('!quiet');
+  activity.observe(Array.from({length: 257}, (_, i) => '!room' + i), false);
+  assert.notEqual(activity.mark('!quiet'), quiet);
 });

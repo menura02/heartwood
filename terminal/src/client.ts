@@ -15,7 +15,7 @@ import {
 import type { KeyQueryResponse } from './matrix-response.ts';
 import {
   assertRoom, assertRoomMembership, assertRoomSettings, assertTargets, assertTrusted,
-  deviceCode, localUser, megolm, normalizeDeviceCode,
+  deviceCode, localUser, megolm, minimumStorePassphraseLength, normalizeDeviceCode,
 } from './policy.ts';
 import type { DeviceIdentity, StateEvent } from './policy.ts';
 import { Profile } from './profile.ts';
@@ -28,6 +28,7 @@ import type { PendingSendStatus, SendResult } from './send-attempts.ts';
 import type { Conversation } from './conversation-list.ts';
 import { SessionUnread } from './unread.ts';
 import { SyncOwner } from './sync-owner.ts';
+import { RoomActivity } from './room-activity.ts';
 
 interface PreparedSend {
   path: string;
@@ -68,6 +69,7 @@ export class Heartwood {
   private readonly syncOwner = new SyncOwner<string>();
   private closing?: Promise<void>;
   readonly unread = new SessionUnread();
+  private readonly activity = new RoomActivity();
   private firstSync = true;
 
   private constructor(http: MatrixHttp, profile: Profile, machine: OlmMachine, session: Login) {
@@ -81,7 +83,7 @@ export class Heartwood {
   }
 
   static async open(http: MatrixHttp, profile: Profile, session: Login, passphrase: string): Promise<Heartwood> {
-    if (passphrase.length < 12) throw new HeartwoodError('storePassphraseTooShort');
+    if (passphrase.length < minimumStorePassphraseLength) throw new HeartwoodError('storePassphraseTooShort');
     const keyPath = await profile.cryptoStorePath();
     const machine = await OlmMachine.initialize(new UserId(session.user_id), new DeviceId(session.device_id),
       keyPath, passphrase, StoreType.Sqlite).catch(() => {
@@ -149,6 +151,8 @@ export class Heartwood {
     await this.profile.save({sync: {cursor: response.next_batch, invites: [...this.invites]}});
     this.unread.observe(response.rooms?.join ?? {}, this.identity.user, this.firstSync);
     for (const room of Object.keys(response.rooms?.leave ?? {})) this.unread.forget(room);
+    this.activity.observe([...Object.keys(response.rooms?.join ?? {}), ...Object.keys(response.rooms?.leave ?? {})],
+      (response.to_device?.events?.length ?? 0) > 0);
     this.firstSync = false;
     return response.next_batch;
   }
@@ -516,20 +520,33 @@ export class Heartwood {
     const initial = await timeline.initial(events, decode);
     await this.roomPeer(room, peer);
     let catchingUp = false;
+    // The activity mark taken before the sync that bounded the last successful read. The first refresh
+    // always reads, because activity before it was not recorded for this reader.
+    let readMark: string | undefined;
+    const refresh = async (): Promise<ChatLine[]> => {
+      const before = this.activity.mark(room);
+      const until = await this.sync();
+      // Sync reports every timeline, membership and leave change for the room, and every to-device
+      // event that may carry a missing key. Without any of them since the last read there is nothing
+      // new to read or decrypt. A concurrent sync can only change the mark, which forces a read.
+      if (!catchingUp && this.activity.mark(room) === readMark) return [];
+      const lines = await timeline.poll(async from => {
+        await this.roomPeer(room, peer);
+        const page = await readForwardPage(request, room, from, until);
+        await this.roomPeer(room, peer);
+        catchingUp = page.next !== undefined && page.next !== until;
+        return page;
+      }, decode);
+      readMark = before;
+      return lines;
+    };
     return {
       initial,
       peer,
       get catchingUp() { return catchingUp; },
       send: (message: string) => this.send(room, message, peer),
       retry: () => this.retrySend(room, peer),
-      refresh: () => timeline.poll(async from => {
-        const until = await this.sync();
-        await this.roomPeer(room, peer);
-        const page = await readForwardPage(request, room, from, until);
-        await this.roomPeer(room, peer);
-        catchingUp = page.next !== undefined && page.next !== until;
-        return page;
-      }, decode),
+      refresh,
     };
   }
 

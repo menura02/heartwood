@@ -4,7 +4,7 @@ import { stdin, stdout } from 'node:process';
 import { Writable } from 'node:stream';
 import type { Heartwood } from './client.ts';
 import { MatrixHttp, login, register } from './matrix.ts';
-import { deviceCode, formatDeviceCode, matrixOrigin, safeText } from './policy.ts';
+import { deviceCode, formatDeviceCode, matrixOrigin, minimumStorePassphraseLength, safeText } from './policy.ts';
 import type { Profile } from './profile.ts';
 import { HistoryNavigator } from './history-navigation.ts';
 import type { SendResult } from './send-attempts.ts';
@@ -204,6 +204,23 @@ async function secret(input: TerminalInput, prompt: string, signal: AbortSignal)
   }
 }
 
+const passphraseAttempts = 3;
+
+async function storePassphrase(input: TerminalInput, signal: AbortSignal, ui: Translator,
+  confirm: boolean): Promise<string> {
+  for (let attempt = 1; ; attempt++) {
+    const passphrase = await secret(input, ui.text('storePassphrase'), signal);
+    let failure: Error | undefined;
+    if (passphrase.length < minimumStorePassphraseLength) failure = new HeartwoodError('storePassphraseTooShort');
+    else if (confirm && passphrase !== await secret(input, ui.text('confirmPassphrase'), signal)) {
+      failure = new CliError('passphraseMismatch');
+    }
+    if (!failure) return passphrase;
+    if (attempt >= passphraseAttempts) throw failure;
+    console.error(errorText(failure, ui));
+  }
+}
+
 async function showGuide(client: Heartwood, signal: AbortSignal, ui: Translator): Promise<void> {
   const labels = {accept: 'guideAccept', wait: 'guideWait', verify: 'guideVerify', changed: 'guideChanged',
     ready: 'guideReady', invite: 'guideInvite', unavailable: 'guideUnavailable'} as const;
@@ -257,7 +274,18 @@ async function shell(client: Heartwood, input: TerminalInput, closed: AbortContr
             break;
           case '/accept': await client.accept(target); console.log(ui.text('accepted')); break;
           case '/reject': await client.reject(target); console.log(ui.text('rejected')); break;
-          case '/block': await client.block(target); console.log(ui.text('blocked')); break;
+          case '/block': {
+            try { await client.block(target); }
+            catch (error) {
+              // The local block is saved first; the remaining server steps are safe to repeat.
+              if (!closed.signal.aborted && client.profile.data.blocked.includes(target)) {
+                console.error(ui.text('blockIncomplete'));
+              }
+              throw error;
+            }
+            console.log(ui.text('blocked'));
+            break;
+          }
           case '/verify': {
             await client.verify(target, verificationCode(line));
             console.log(ui.text('verified'));
@@ -451,13 +479,14 @@ async function main(args: string[], ui: Translator): Promise<void> {
     profile = await Profile.open(options.name, http.origin, options.username);
     closed.signal.throwIfAborted();
     const password = await secret(input, ui.text('accountPassword'), closed.signal);
-    if (options.mode === 'register') {
-      await register(http, options.username, password, await secret(input, ui.text('registrationToken'), closed.signal));
+    const token = options.mode === 'register' ?
+      await secret(input, ui.text('registrationToken'), closed.signal) : undefined;
+    // Settle the local passphrase before any server call so a typo cannot leave a registered account
+    // without a usable local profile.
+    const passphrase = await storePassphrase(input, closed.signal, ui, !profile.data.identity);
+    if (token !== undefined) {
+      await register(http, options.username, password, token);
       console.log(ui.text('accountCreated'));
-    }
-    const passphrase = await secret(input, ui.text('storePassphrase'), closed.signal);
-    if (!profile.data.identity && passphrase !== await secret(input, ui.text('confirmPassphrase'), closed.signal)) {
-      throw new CliError('passphraseMismatch');
     }
     client = await Heartwood.open(http, profile, await login(http, options.username, password, profile.data.device), passphrase);
     await shell(client, input, closed, ui, guided);

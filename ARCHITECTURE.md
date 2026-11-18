@@ -5,7 +5,7 @@
 The TypeScript terminal client uses the Matrix client API for authentication, invitations, sync, history, and encrypted events. The Matrix Rust SDK Node binding provides Olm/Megolm and stores keys in passphrase-protected SQLite. The disposable Synapse lab runs the server and stores events. The earlier WASM SDK evaluation required persistent IndexedDB, which the tested Node environment lacked.
 
 - Each profile is bound to one server, user, and device. The SDK records keys before the profile saves its sync cursor and pending invitation IDs. Profile writes are atomic. SQLite provides the operating system lock on local storage. Takeover of a marked stale lock requires acquiring that lock. An ambiguous or unmarked legacy `in-use` directory stops startup. Confirm all clients have stopped before removing a verified empty legacy directory.
-- Live chat opens history and forward reads at the same Matrix boundary. Each refresh processes sync and at most one forward page. Main-prompt history reads up to 50 Matrix events and holds a separate cursor per room. An empty page with a valid continuation can advance. A failed read or stalled cursor preserves the previous position. Opaque cursors are limited to 1 KiB each and 256 KiB total across 128 rooms; the least recently used whole room is evicted when the budget is exceeded.
+- Live chat opens history and forward reads at the same Matrix boundary. Each refresh processes sync and at most one forward page. A refresh skips the room state and history requests when no sync since the previous read reported the room or delivered to-device events, so an idle chat sends one sync request per refresh. Main-prompt history reads up to 50 Matrix events and holds a separate cursor per room. An empty page with a valid continuation can advance. A failed read or stalled cursor preserves the previous position. Opaque cursors are limited to 1 KiB each and 256 KiB total across 128 rooms; the least recently used whole room is evicted when the budget is exceeded.
 - One shared sync operation owns the profile cursor. A caller can cancel its wait while the shared operation continues for other callers. Leaving a chat stops its output and cancels its requests and timer. Exit cancels sync and waits for it before closing the SDK and releasing the profile lock.
 - The Matrix client validates the fields it consumes and accepts additional fields and structurally valid unfamiliar events. It caps decoded response bodies at 16 MiB for sync, 8 MiB for room state or history, 4 MiB for key endpoints, and 1 MiB for other endpoints and HTTP errors. Invalid JSON, interrupted reads, timeouts and caller cancellation follow separate paths.
 - The app migrates supported unversioned metadata to `schemaVersion: 1` under the profile lock. Metadata is capped at 1 MiB. A staged write is flushed before replacing `profile.json`; an interruption before replacement leaves the previous valid record authoritative. An unsupported newer record stays untouched. The SDK manages its own key store. The client orders SDK writes before saving the sync cursor so it can resume from the last saved cursor after interruption.
@@ -15,5 +15,22 @@ The TypeScript terminal client uses the Matrix client API for authentication, in
 - The chat view deduplicates history and live output against the last 2,048 displayed event IDs and retains up to 200 eligible plaintext messages for search. One in-chat history request can run alongside live polling. Leaving the chat cancels that request before another room opens. History retains cursors for up to 128 rooms and 128 recent cursor values per room.
 - The existing sync stream tracks new activity in memory for up to 128 rooms, 256 outstanding IDs per room, and 4,096 recent IDs across rooms. The main prompt observes updates when a command syncs. Viewing a readable event clears that event locally. No read receipt is written.
 - An uncertain send retains its transaction path, encrypted payload and recipient identity in memory. There is at most one pending send per room and up to 32 rooms. Retry uses the original transaction in the same session and checks room membership, blocking and device identity again. An event ID confirms server acceptance. Discard removes local tracking, and any server event remains. [Matrix transaction IDs](https://spec.matrix.org/latest/client-server-api/#transaction-identifiers)
+
+## Code map
+
+All source files are in `terminal/src`.
+
+| Area | Files |
+| --- | --- |
+| Command line, prompts and output | `cli.ts`, `commands.ts`, `terminal-input.ts`, `terminal-view.ts` |
+| Terminal text and failures | `locale.ts`, `failures.ts` |
+| Matrix HTTP and response validation | `matrix.ts`, `matrix-response.ts` |
+| Client operations, sync and encryption | `client.ts`, `sync-owner.ts`, `room-activity.ts` |
+| Room and device trust policy | `policy.ts` |
+| Profiles, locks and removal | `profile.ts`, `profile-lock.ts`, `profile-management.ts`, `doctor.ts` |
+| Live chat and history | `live-timeline.ts`, `chat-feed.ts`, `chat-session.ts`, `history.ts`, `history-navigation.ts`, `connection.ts` |
+| Sending, unread state and conversation numbers | `send-attempts.ts`, `unread.ts`, `conversation-list.ts` |
+
+Unit tests are in `terminal/test`, the Synapse and terminal tests in `terminal/integration`, the disposable lab in `terminal/lab`, and the CI and release scripts in `terminal/ci`.
 
 [Setup and usage](README.md) · [Security and limitations](SECURITY.md)
