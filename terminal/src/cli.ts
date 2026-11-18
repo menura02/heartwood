@@ -3,7 +3,7 @@ import type { Interface } from 'node:readline/promises';
 import { stdin, stdout } from 'node:process';
 import { Writable } from 'node:stream';
 import type { Heartwood } from './client.ts';
-import { MatrixHttp, login, register } from './matrix.ts';
+import { MatrixFailure, MatrixHttp, login, register } from './matrix.ts';
 import { deviceCode, formatDeviceCode, matrixOrigin, minimumStorePassphraseLength, safeText } from './policy.ts';
 import type { Profile } from './profile.ts';
 import { HistoryNavigator } from './history-navigation.ts';
@@ -485,7 +485,10 @@ async function main(args: string[], ui: Translator): Promise<void> {
     // without a usable local profile.
     const passphrase = await storePassphrase(input, closed.signal, ui, !profile.data.identity);
     if (token !== undefined) {
-      await register(http, options.username, password, token);
+      await register(http, options.username, password, token).catch((error: unknown) => {
+        if (error instanceof MatrixFailure && error.code === 'M_USER_IN_USE') console.error(ui.text('usernameTakenLogin'));
+        throw error;
+      });
       console.log(ui.text('accountCreated'));
     }
     client = await Heartwood.open(http, profile, await login(http, options.username, password, profile.data.device), passphrase);

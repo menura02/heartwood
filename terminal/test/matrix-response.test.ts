@@ -130,6 +130,9 @@ test('registration sends the token only after a valid challenge and refuses a mi
   responses.push({value: challenge, status: 401}, {value: completed, status: 401}, {value: {user_id: alice}, status: 200});
   await request();
   assert.equal(fetch.mock.callCount(), 6);
+  responses.push({value: {errcode: 'M_USER_IN_USE', error: 'User ID already taken.'}, status: 400});
+  await assert.rejects(request(), {status: 400, code: 'M_USER_IN_USE'});
+  assert.equal(fetch.mock.callCount(), 7);
 });
 
 test('sync validates consumed sections while preserving unknown extensions and event types', async () => {
