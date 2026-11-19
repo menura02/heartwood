@@ -9,6 +9,8 @@
 - Yerel engelleme kaydedildiği halde sunucu güncellemesi veya ortak odalardan çıkış başarısız olursa engellemenin nasıl tamamlanacağı açıklanır.
 - Kayıt sırasında alınmış veya geçersiz kullanıcı adı, eksik belirteç akışı yerine Matrix hatası olarak bildirilir. Kullanıcı adı alınmışsa `login` önerilir.
 - Mimari belgesine kod haritası eklendi.
+- Synapse laboratuvarı CI’da, README’de ve sürüm paketinde hash ile kilitlenmiş gereksinim dosyasından kurulur.
+- CI, her PR commit’inde iki kez yerine `main` gönderimlerinde ve PR’larda çalışır. Laboratuvar bağımlılıkları önbelleğe alınır ve GitHub Actions ile npm için Dependabot eklendi.
 
 ## 0.6.2
 

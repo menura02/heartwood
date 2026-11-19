@@ -1,7 +1,7 @@
 name: Heartwood terminal
 on:
   push:
-    branches: ['**']
+    branches: [main]
   pull_request:
   workflow_dispatch:
   workflow_call:
@@ -78,7 +78,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'WSL import failed.' }
           "HEARTWOOD_WSL_DISTRO=$distro" >> $env:GITHUB_ENV
           "HEARTWOOD_SYNAPSE_PYTHON=/opt/heartwood/bin/python" >> $env:GITHUB_ENV
-          wsl.exe --distribution $distro --user root --exec sh -ec 'apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq python3-venv ca-certificates && python3 -m venv /opt/heartwood && /opt/heartwood/bin/python -m pip install --disable-pip-version-check matrix-synapse==1.164.2'
+          wsl.exe --distribution $distro --user root --exec sh -ec 'apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq python3-venv ca-certificates && python3 -m venv /opt/heartwood && /opt/heartwood/bin/python -m pip install --disable-pip-version-check --require-hashes -r lab/synapse-requirements.txt'
           if ($LASTEXITCODE -ne 0) { throw 'Synapse installation failed.' }
       - name: Test Windows CLI in real ConPTY
         if: runner.os == 'Windows'
@@ -104,13 +104,15 @@ jobs:
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: '3.13'
+          cache: pip
+          cache-dependency-path: terminal/lab/synapse-requirements.txt
       - run: npm ci
       - name: Check release validation and packaging
         run: python -B ci/test_release.py
       - name: Run against disposable Synapse
         run: |
           python -m venv "$RUNNER_TEMP/heartwood-synapse"
-          "$RUNNER_TEMP/heartwood-synapse/bin/python" -m pip install matrix-synapse==1.164.2
+          "$RUNNER_TEMP/heartwood-synapse/bin/python" -m pip install --require-hashes -r lab/synapse-requirements.txt
           HEARTWOOD_SYNAPSE_PYTHON="$RUNNER_TEMP/heartwood-synapse/bin/python" node integration/run-local.ts
       - name: Run the real CLI in Linux PTYs
         run: HEARTWOOD_SYNAPSE_PYTHON="$RUNNER_TEMP/heartwood-synapse/bin/python" node integration/run-pty.ts

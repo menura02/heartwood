@@ -9,6 +9,8 @@
 - Explain how to finish a block when the local block was saved but the server update or leaving shared rooms failed.
 - Report a taken or invalid username during registration as a Matrix error instead of a missing token flow, and suggest `login` when the username is taken.
 - Add a code map to the architecture document.
+- Install the Synapse lab from a hash-locked requirements file in CI, the README, and the release package.
+- Run CI on pushes to `main` and on pull requests instead of twice for every pull request commit, cache lab dependencies, and add Dependabot for GitHub Actions and npm.
 
 ## 0.6.2
 

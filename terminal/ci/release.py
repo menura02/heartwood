@@ -35,6 +35,7 @@ PACKAGE_FILES = (
     "terminal/lab/registration-token.ts",
     "terminal/lab/run.ts",
     "terminal/lab/supervise.py",
+    "terminal/lab/synapse-requirements.txt",
     "terminal/src/chat-feed.ts",
     "terminal/src/chat-session.ts",
     "terminal/src/cli.ts",
