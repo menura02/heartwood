@@ -113,9 +113,9 @@ process.on('message', async (command: Command) => {
     try {
       try { await client?.close(); }
       finally { await profile?.close(); }
-      process.send?.({ok: true}, undefined, undefined, () => process.disconnect());
+      process.send?.({ok: true}, undefined, undefined, () => process.disconnect?.());
     } catch (error) {
-      process.send?.({error: (error as Error).message}, undefined, undefined, () => process.disconnect());
+      process.send?.({error: (error as Error).message}, undefined, undefined, () => process.disconnect?.());
     }
     return;
   }
