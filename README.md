@@ -19,13 +19,13 @@ In PowerShell, use `npm.cmd` if the PowerShell shim is blocked. Installation dow
 
 ## Try the local lab
 
-In Linux or Ubuntu WSL, install Synapse in an isolated Python environment. Use Python 3.13 or later with `venv` and `curl`. This setup works without `ensurepip`.
+In Linux or Ubuntu WSL, install Synapse in an isolated Python environment. Use Python 3.13 or later with `venv` and `curl`. This setup works without `ensurepip`. Run it from the repository root or the extracted release package. The lock file pins Synapse 1.164.2 and every dependency by hash.
 
 ```sh
 mkdir -p "$HOME/.local/share/heartwood"
 python3 -m venv --without-pip "$HOME/.local/share/heartwood/venv"
 curl -fsSL https://bootstrap.pypa.io/pip/pip.pyz -o "$HOME/.local/share/heartwood/pip.pyz"
-"$HOME/.local/share/heartwood/venv/bin/python" "$HOME/.local/share/heartwood/pip.pyz" install matrix-synapse==1.164.2
+"$HOME/.local/share/heartwood/venv/bin/python" "$HOME/.local/share/heartwood/pip.pyz" install --require-hashes -r terminal/lab/synapse-requirements.txt
 ```
 
 From `terminal/` on Linux, set `export HEARTWOOD_SYNAPSE_PYTHON="$HOME/.local/share/heartwood/venv/bin/python"` and run `node lab/run.ts 18008`. On Windows, start it from PowerShell in `terminal/`.

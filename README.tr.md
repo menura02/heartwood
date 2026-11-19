@@ -19,13 +19,13 @@ PowerShell betiği engelleniyorsa `npm.cmd` kullan. Kurulum platformuna uygun Ma
 
 ## Yerel laboratuvarı dene
 
-Linux veya Ubuntu WSL’de Synapse’i ayrı bir Python ortamına kur. Python 3.13 veya üstü, `venv` ve `curl` kullan. Bu kurulum `ensurepip` gerektirmez.
+Linux veya Ubuntu WSL’de Synapse’i ayrı bir Python ortamına kur. Python 3.13 veya üstü, `venv` ve `curl` kullan. Bu kurulum `ensurepip` gerektirmez. Komutları depo kökünden veya açılmış sürüm paketinden çalıştır. Kilit dosyası Synapse 1.164.2’yi ve tüm bağımlılıklarını hash ile sabitler.
 
 ```sh
 mkdir -p "$HOME/.local/share/heartwood"
 python3 -m venv --without-pip "$HOME/.local/share/heartwood/venv"
 curl -fsSL https://bootstrap.pypa.io/pip/pip.pyz -o "$HOME/.local/share/heartwood/pip.pyz"
-"$HOME/.local/share/heartwood/venv/bin/python" "$HOME/.local/share/heartwood/pip.pyz" install matrix-synapse==1.164.2
+"$HOME/.local/share/heartwood/venv/bin/python" "$HOME/.local/share/heartwood/pip.pyz" install --require-hashes -r terminal/lab/synapse-requirements.txt
 ```
 
 Linux’ta `terminal/` içindeyken `export HEARTWOOD_SYNAPSE_PYTHON="$HOME/.local/share/heartwood/venv/bin/python"` ayarla ve `node lab/run.ts --lang tr 18008` çalıştır. Windows’ta laboratuvarı `terminal/` içinden PowerShell ile başlat.
