@@ -2,6 +2,14 @@
 
 # Değişiklik kaydı
 
+## Yayımlanmamış
+
+- Yerel depo parolası ve yeni profilde onayı, kayıt veya girişten önce sorulur. Kısa veya eşleşmeyen parola en fazla üç kez yeniden sorulur ve artık yerel profili olmayan kayıtlı bir hesap bırakmaz.
+- Boşta bekleyen canlı sohbette oda durumu ve geçmiş istekleri atlanır. Oda etkinliği yoksa yenileme yalnızca eşzamanlama isteği gönderir.
+- Yerel engelleme kaydedildiği halde sunucu güncellemesi veya ortak odalardan çıkış başarısız olursa engellemenin nasıl tamamlanacağı açıklanır.
+- Kayıt sırasında alınmış veya geçersiz kullanıcı adı, eksik belirteç akışı yerine Matrix hatası olarak bildirilir. Kullanıcı adı alınmışsa `login` önerilir.
+- Mimari belgesine kod haritası eklendi.
+
 ## 0.6.2
 
 - Açık sohbet geçmişini ilk karşı tarafa bağla, profil anahtar deposu yollarını doğrula ve kesintiye uğrayan profil kaldırmayı güvenle toparla.

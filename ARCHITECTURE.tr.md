@@ -5,7 +5,7 @@
 TypeScript terminal istemcisi kimlik doğrulama, davet, eşzamanlama, geçmiş ve şifreli olaylar için Matrix istemci API’sini kullanır. Matrix Rust SDK Node bağlayıcısı Olm/Megolm sağlar ve anahtarları parola korumalı SQLite’ta saklar. Geçici Synapse laboratuvarı sunucuyu çalıştırır ve olayları saklar. Önceki WASM SDK değerlendirmesi, test edilen Node ortamında bulunmayan kalıcı IndexedDB gerektiriyordu.
 
 - Her profil bir sunucuya, kullanıcıya ve cihaza bağlıdır. Profil eşzamanlama imlecini ve bekleyen davet kimliklerini kaydetmeden önce SDK anahtarları kaydeder. Profil yazımları atomiktir. Yerel depolamada işletim sistemi kilidini SQLite sağlar. İşaretli ve eski bir kilidi devralmak için bu kilidi almak gerekir. Belirsiz veya işaretsiz eski `in-use` dizini başlatmayı durdurur. Boş olduğu doğrulanmış eski dizini kaldırmadan önce tüm istemcilerin durduğunu doğrula.
-- Canlı sohbet, geçmişi ve ileri okumayı aynı Matrix sınırından açar. Her yenileme eşzamanlama ve en fazla bir ileri sayfa işler. Ana ekrandaki geçmiş en fazla 50 Matrix olayı okur ve oda başına ayrı imleç tutar. Geçerli devam imleci olan boş sayfa ilerleyebilir. Başarısız okuma veya ilerlemeyen imleç önceki konumu korur. Anlamı çözümlenmeyen imleçlerin her biri 1 KiB, toplamı 128 oda için 256 KiB ile sınırlıdır. Bütçe aşılınca en uzun süredir kullanılmayan odanın durumu bütünüyle çıkarılır.
+- Canlı sohbet, geçmişi ve ileri okumayı aynı Matrix sınırından açar. Her yenileme eşzamanlama ve en fazla bir ileri sayfa işler. Önceki okumadan bu yana hiçbir eşzamanlama odayı bildirmediyse veya cihazlar arası olay getirmediyse yenileme oda durumu ve geçmiş isteklerini atlar. Böylece boşta bekleyen sohbet her yenilemede yalnızca bir eşzamanlama isteği gönderir. Ana ekrandaki geçmiş en fazla 50 Matrix olayı okur ve oda başına ayrı imleç tutar. Geçerli devam imleci olan boş sayfa ilerleyebilir. Başarısız okuma veya ilerlemeyen imleç önceki konumu korur. Anlamı çözümlenmeyen imleçlerin her biri 1 KiB, toplamı 128 oda için 256 KiB ile sınırlıdır. Bütçe aşılınca en uzun süredir kullanılmayan odanın durumu bütünüyle çıkarılır.
 - Profil imlecini tek bir ortak eşzamanlama işlemi ilerletir. Çağıran işlem kendi bekleyişini iptal edebilir, ortak işlem diğer çağrılar için sürer. Sohbetten ayrılınca o sohbetin çıktısı durur, istekleri ve zamanlayıcısı iptal edilir. Çıkış, SDK’yı kapatıp profil kilidini bırakmadan önce eşzamanlamayı iptal eder ve bitmesini bekler.
 - Matrix istemcisi kullandığı alanları doğrular, ek alanları ve yapısı geçerli tanımadığı olayları kabul eder. Çözülmüş yanıt gövdesinin üst sınırı eşzamanlama için 16 MiB, oda durumu ve geçmiş için 8 MiB, anahtar uç noktaları için 4 MiB, diğer uç noktalar ve HTTP hataları için 1 MiB’dir. Geçersiz JSON, yarıda kesilen okuma, zaman aşımı ve kullanıcı iptali ayrı işlenir.
 - Uygulama, desteklenen sürümsüz metaveriyi profil kilidi altında `schemaVersion: 1` biçimine geçirir. Metaveri 1 MiB ile sınırlıdır. Geçici dosya diske yazıldıktan sonra `profile.json` yerini alır. İşlem bu adımdan önce kesilirse önceki geçerli kayıt esas alınır. Desteklenmeyen yeni sürümlü kayda dokunulmaz. SDK kendi anahtar deposunu yönetir. İstemci SDK yazımlarını imleç kaydından önce tamamlar ve kesinti sonrası son kaydedilen imleçten devam edebilir.
@@ -15,5 +15,22 @@ TypeScript terminal istemcisi kimlik doğrulama, davet, eşzamanlama, geçmiş v
 - Sohbet görünümü, geçmiş ve canlı çıktıda son 2.048 olay kimliğine göre tekrarı önler ve arama için en fazla 200 uygun düz metin mesajı tutar. Canlı sorgulamayla birlikte sohbet başına bir geçmiş isteği çalışabilir. Sohbetten çıkmak, başka oda açılmadan önce bu isteği iptal eder. Geçmiş en fazla 128 oda ve oda başına 128 yakın imleç değeri tutar.
 - Mevcut eşzamanlama akışı en fazla 128 oda, oda başına 256 bekleyen kimlik ve odalar arasında 4.096 yakın kimlikle yeni etkinliği bellekte izler. Ana ekran, bir komut eşzamanlama yaptığında güncellemeleri görür. Okunabilir bir olayı görüntülemek o olayı yerelde temizler. Okundu bilgisi yazılmaz.
 - Sonucu belirsiz gönderimin işlem yolu, şifreli yükü ve alıcı kimliği bellekte kalır. Oda başına bir ve toplamda en fazla 32 odada gönderim bekleyebilir. Tekrar aynı oturumda özgün işlemi kullanır ve oda üyeliğini, engellemeyi ve cihaz kimliğini yeniden kontrol eder. Olay kimliği sunucunun kabulünü doğrular. Vazgeçme yerel takibi kaldırır ve sunucudaki olay kalır. [Matrix işlem kimlikleri](https://spec.matrix.org/latest/client-server-api/#transaction-identifiers)
+
+## Kod haritası
+
+Tüm kaynak dosyalar `terminal/src` içindedir.
+
+| Alan | Dosyalar |
+| --- | --- |
+| Komut satırı, istemler ve çıktı | `cli.ts`, `commands.ts`, `terminal-input.ts`, `terminal-view.ts` |
+| Terminal metinleri ve hatalar | `locale.ts`, `failures.ts` |
+| Matrix HTTP ve yanıt doğrulama | `matrix.ts`, `matrix-response.ts` |
+| İstemci işlemleri, eşzamanlama ve şifreleme | `client.ts`, `sync-owner.ts`, `room-activity.ts` |
+| Oda ve cihaz güven politikası | `policy.ts` |
+| Profiller, kilitler ve kaldırma | `profile.ts`, `profile-lock.ts`, `profile-management.ts`, `doctor.ts` |
+| Canlı sohbet ve geçmiş | `live-timeline.ts`, `chat-feed.ts`, `chat-session.ts`, `history.ts`, `history-navigation.ts`, `connection.ts` |
+| Gönderim, okunmamış durumu ve sohbet numaraları | `send-attempts.ts`, `unread.ts`, `conversation-list.ts` |
+
+Birim testleri `terminal/test`, Synapse ve terminal testleri `terminal/integration`, geçici laboratuvar `terminal/lab`, CI ve sürüm betikleri `terminal/ci` içindedir.
 
 [Kurulum ve kullanım](README.tr.md) · [Güvenlik ve sınırlar](SECURITY.tr.md)

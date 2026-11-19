@@ -52,6 +52,11 @@ async function readBody(response: Response, limit: number, signal: AbortSignal):
   }
 }
 
+function errorCode(value: unknown): string {
+  return isRecord(value) && typeof value.errcode === 'string' && /^M_[A-Z_]+$/.test(value.errcode)
+    ? value.errcode : 'UNKNOWN';
+}
+
 export class MatrixHttp {
   readonly origin: string;
   token?: string;
@@ -112,11 +117,7 @@ export class MatrixHttp {
 
   async request(method: string, path: string, body?: unknown): Promise<unknown> {
     const {status, value} = await this.json(method, path, body);
-    if (status < 200 || status >= 300) {
-      const code = isRecord(value) && typeof value.errcode === 'string' && /^M_[A-Z_]+$/.test(value.errcode)
-        ? value.errcode : 'UNKNOWN';
-      throw new MatrixFailure(status, code);
-    }
+    if (status < 200 || status >= 300) throw new MatrixFailure(status, errorCode(value));
     return value;
   }
 }
@@ -127,6 +128,8 @@ export async function register(http: MatrixHttp, username: string, password: str
   const registration = { username, password, inhibit_login: true };
   const challenge = await http.json('POST', 'register', registration);
   const value = challenge.value;
+  // Synapse checks the username before user-interactive auth, so a taken or invalid name fails here.
+  if (challenge.status >= 400 && challenge.status !== 401) throw new MatrixFailure(challenge.status, errorCode(value));
   if (challenge.status !== 401 || !isRecord(value) || !isToken(value.session) || !Array.isArray(value.flows)) {
     throw new HeartwoodError('registrationFlowMissing');
   }
