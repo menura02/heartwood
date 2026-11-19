@@ -6,7 +6,8 @@
     "allowImportingTsExtensions": true,
     "erasableSyntaxOnly": true,
     "noEmit": true,
-    "skipLibCheck": true
+    "skipLibCheck": true,
+    "types": ["node"]
   },
   "include": ["src", "test", "integration", "lab", "ci"]
 }
