@@ -13,6 +13,8 @@ Gerçek kimlik bilgilerini, belirteçleri, anahtarları, profilleri ve özel mes
 
 Arama metni, sonuçlar, tekrar engelleme ve okunmamış durumu bellekte tutulur. Sohbetten çıkınca arama referansları bırakılır. JavaScript belleğin fiziksel olarak silinmesini garanti etmez. Yerel kaldırma komutu doğrulanmış profil dosyalarını normal dosya sistemi işlemleriyle siler. Karantinaya taşıma öncesi kesinti, sonraki kilitli işlemde güvenle toparlanabilen sürümlü bir kaldırma işareti bırakır. Karantinaya taşıma sonrası kesinti, elle inceleme için profil kökünde yalıtılmış bir `.removed-*` dizini bırakabilir. Anahtar deposu yol kontrolleri profil dışına bağlı yollar üzerinden yazma riskini azaltır; aynı işletim sistemi kullanıcısıyla çalışan kötü niyetli bir sürecin kontroller arasında dosya sistemine müdahale etmesini engellemez.
 
+Matrix kripto paketi kurulum sırasında yerel kitaplığını GitHub Releases’tan denetlemeden indirir. Heartwood’un kurulum adımı bu kitaplığı `terminal/src/native-binding.ts` içinde sabitlenmiş SHA-256 özetleriyle karşılaştırır, eşleşmezse kaldırır ve kurulumu başarısız sayar. `doctor` kitaplığı yüklemeden önce aynı denetimi yapar. Özetler sabitlendikleri anda GitHub’da yayımlanan dosyayı kaydeder. Bu yüzden sonradan yapılan değişiklikleri veya aktarım sırasında yapılan müdahaleyi yakalar, ancak baştan ele geçirilmiş bir sürümü yakalamaz.
+
 Profil metaverisi ve SDK anahtar deposu ayrı ayrı kaydedilir. İstemci kesintiden sonra son kaydedilen profil imlecinden devam eder. Geçerli profil kaydı olmadan anahtar verisi veya geçici yazım dosyası bulunursa Heartwood durur ve bu dosyaları korur.
 
 [Kurulum ve kullanım](README.tr.md) · [Mimari](ARCHITECTURE.tr.md)

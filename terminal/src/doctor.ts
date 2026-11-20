@@ -4,12 +4,13 @@ import { access, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
+import { checkBinding } from './native-binding.ts';
 import { matrixOrigin } from './policy.ts';
 
 type Result = {
   check: 'doctorNode' | 'doctorCrypto' | 'doctorProfile' | 'doctorMatrix';
   level: 'doctorPass' | 'doctorWarn' | 'doctorFail';
-  detail: 'doctorNodeOk' | 'doctorNodeBad' | 'doctorCryptoOk' | 'doctorCryptoBad'
+  detail: 'doctorNodeOk' | 'doctorNodeBad' | 'doctorCryptoOk' | 'doctorCryptoBad' | 'doctorCryptoUntrusted'
     | 'doctorProfileOk' | 'doctorProfileMissing' | 'doctorProfileBad'
     | 'doctorMatrixSkipped' | 'doctorMatrixOrigin' | 'doctorMatrixOk' | 'doctorMatrixBad';
 };
@@ -45,6 +46,10 @@ async function checkProfile(): Promise<Result> {
 async function checkCrypto(): Promise<Result> {
   const check = 'doctorCrypto';
   try {
+    // Hash the library before loading it, because loading runs its native code.
+    const {result} = await checkBinding();
+    if (result === 'untrusted') return {check, level: 'doctorFail', detail: 'doctorCryptoUntrusted'};
+    if (result !== 'trusted') return {check, level: 'doctorFail', detail: 'doctorCryptoBad'};
     await promisify(execFile)(process.execPath, [
       '--input-type=module', '--eval', "await import('@matrix-org/matrix-sdk-crypto-nodejs')",
     ], {cwd: new URL('../', import.meta.url), timeout, windowsHide: true});

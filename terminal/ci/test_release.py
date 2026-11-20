@@ -36,6 +36,12 @@ class ReleaseTest(unittest.TestCase):
     def write(self, name, data):
         (self.root / name).write_text(json.dumps(data), encoding="utf-8")
 
+    def test_package_lists_every_client_source_and_test(self):
+        terminal = Path(__file__).resolve().parents[1]
+        present = {f"terminal/{path.relative_to(terminal).as_posix()}"
+                   for pattern in ("src/*.ts", "test/*.ts") for path in terminal.glob(pattern)}
+        self.assertEqual(sorted(present - set(PACKAGE_FILES)), [])
+
     def test_semver_and_manifest_consistency(self):
         self.assertEqual(validate_version(self.root, "v0.3.0"), "0.3.0")
         self.assertIsNotNone(SEMVER_TAG.fullmatch("v0.3.0-rc.1+build.007"))

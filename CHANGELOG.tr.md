@@ -10,6 +10,8 @@
 - Kayıt sırasında alınmış veya geçersiz kullanıcı adı, eksik belirteç akışı yerine Matrix hatası olarak bildirilir. Kullanıcı adı alınmışsa `login` önerilir.
 - Mimari belgesine kod haritası eklendi.
 - Synapse laboratuvarı CI’da, README’de ve sürüm paketinde hash ile kilitlenmiş gereksinim dosyasından kurulur.
+- İndirilen yerel Matrix kripto kitaplığı kurulumda ve `doctor` içinde sabitlenmiş SHA-256 özetleriyle doğrulanır, eşleşmeyen kitaplık kaldırılır.
+- Paketlenmiş istemcinin ihtiyaç duyduğu oda etkinliği izleyicisi sürüm paketine eklendi. Paketin tüm istemci kaynaklarını ve testlerini içerdiği denetlenir.
 - CI, her PR commit’inde iki kez yerine `main` gönderimlerinde ve PR’larda çalışır. Laboratuvar bağımlılıkları önbelleğe alınır ve GitHub Actions ile npm için Dependabot eklendi.
 
 ## 0.6.2
