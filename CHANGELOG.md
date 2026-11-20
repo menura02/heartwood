@@ -10,6 +10,8 @@
 - Report a taken or invalid username during registration as a Matrix error instead of a missing token flow, and suggest `login` when the username is taken.
 - Add a code map to the architecture document.
 - Install the Synapse lab from a hash-locked requirements file in CI, the README, and the release package.
+- Verify the downloaded native Matrix crypto library against pinned SHA-256 digests during installation and in `doctor`, and remove a library that does not match.
+- Include the room activity tracker in the release package, which the packaged client needs, and check that the package lists every client source and test.
 - Run CI on pushes to `main` and on pull requests instead of twice for every pull request commit, cache lab dependencies, and add Dependabot for GitHub Actions and npm.
 
 ## 0.6.2
