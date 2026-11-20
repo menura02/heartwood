@@ -8,22 +8,22 @@ import { selectLanguage } from './locale.ts';
 
 // The binding's postinstall script downloads its native library from GitHub Releases without an
 // integrity check, so the npm lockfile does not cover the code that holds every key. These SHA-256
-// digests are the ones GitHub reports for the v0.6.6 release assets. Update them with the version.
-export const bindingVersion = '0.6.6';
+// digests are the ones GitHub reports for the release assets of bindingVersion. Update both together.
+export const bindingVersion = '0.7.0';
 export const bindingDigests: Readonly<Record<string, string>> = {
-  'matrix-sdk-crypto.darwin-arm64.node': '99dc7d90aa830d9b6d96bcda23589ce0fb72d10f84ec447c9d241937fee86d9f',
-  'matrix-sdk-crypto.darwin-x64.node': '4a22a351e988b9ed1e90620b3474e576325ce5287f623351b6b2e9cfaf078c2c',
-  'matrix-sdk-crypto.linux-arm-gnueabihf.node': '9d5e19a647ea4dcf41fa021b3c2cbc80cb32b3f3e72822c97dd130c9d4891fa8',
-  'matrix-sdk-crypto.linux-arm64-gnu.node': 'c43c347f39786ee9f2d11b5ae3088d182c1a81636f2b68dc2297fe6716be2891',
-  'matrix-sdk-crypto.linux-arm64-musl.node': '164bba83711e56373bd454d0d198f151e8928c5be2772c5696289da5cca9afac',
-  'matrix-sdk-crypto.linux-ia32-gnu.node': 'b2b86a72a1f4767c2bc22647a7a855767e2c4a8f247b68cfe4a46c025780c251',
-  'matrix-sdk-crypto.linux-riscv64-gnu.node': '0ba60210eeb25e250ab3cbe72c34c38c830417b6e7ece08c1ff81d066ecd3a0d',
-  'matrix-sdk-crypto.linux-s390x-gnu.node': '860d1418249cd883156a6746e0b4560f044cbb57964530efa9dd8459cd659f9e',
-  'matrix-sdk-crypto.linux-x64-gnu.node': 'aeb21029ac6bb29cd06493f67b19a5a75b3d0371a1ab452fe59f78249350f0f7',
-  'matrix-sdk-crypto.linux-x64-musl.node': 'e357c2b58801e48974cdabd0fb76ef2cc7972c845c41bb50191a0d6ea0363bca',
-  'matrix-sdk-crypto.win32-arm64-msvc.node': '22c33c5462f71e5342df499666d4c637a59d673b8d81abb736ac5e65cd38b92d',
-  'matrix-sdk-crypto.win32-ia32-msvc.node': '1c084f0ebd5148721a4c8c3bfd59ff44a0b20252fef948a2ebe91bfb94569880',
-  'matrix-sdk-crypto.win32-x64-msvc.node': '9c61629d14b9de5c2cfa03f2dd4be26cde2b578a0a4aec2bebba624305b48e47',
+  'matrix-sdk-crypto.darwin-arm64.node': '84a805e11ab5cf65fdac62ae0841b6f898e5637dd25ec922d0be349ba570cee4',
+  'matrix-sdk-crypto.darwin-x64.node': '30053cc1f3fd22a4b4d3c63fc8dd1949bd2d61c5ff94dde0786fa2b55848902e',
+  'matrix-sdk-crypto.linux-arm-gnueabihf.node': 'db88d413bfe578bba0b387e897b930123f86c281c072b4a8c669034ed10b34e5',
+  'matrix-sdk-crypto.linux-arm64-gnu.node': '31c181376af0298bbd91e64ede09685f6830971f41c6158404006c6907d2ddc1',
+  'matrix-sdk-crypto.linux-arm64-musl.node': 'c5d3e864965960b0f4f90c148df3a8faf6192b1b2e7fe46ccea625d9cbad7024',
+  'matrix-sdk-crypto.linux-ia32-gnu.node': 'f0b3ab7fa265b3ffae24efaeb8ba6c32e180a79ad346c60fdc7aacb1dafe1134',
+  'matrix-sdk-crypto.linux-riscv64-gnu.node': 'f06ffdaa2f804164282a957a3fb52a3c25047c1537d6900721a781ac6ca94c98',
+  'matrix-sdk-crypto.linux-s390x-gnu.node': '2a2788942d10e93a6ec277b4027f208e2f985432cd3a2f1516638b56cccdd98f',
+  'matrix-sdk-crypto.linux-x64-gnu.node': '5a880046c21d6e6997acda6b999e1bc07b0400ceb90be06554fefff6dfe45249',
+  'matrix-sdk-crypto.linux-x64-musl.node': '12bb9afe19ae9d5e48f2a3cd0936959c76f44f59e4d422412392ea92cb7d92f6',
+  'matrix-sdk-crypto.win32-arm64-msvc.node': 'c67f9cf7406190bc99c21d362d0622379a45d264362e74c32c1e052f0df6b744',
+  'matrix-sdk-crypto.win32-ia32-msvc.node': 'c4523affaea3247889d453c465f27af5efd37ce5701eafce10b0b4ac774c338e',
+  'matrix-sdk-crypto.win32-x64-msvc.node': 'be21569750867d581982efe38b6bc8a31f01ba2667e89c70775d75fa02d36490',
 };
 
 export type BindingCheck = 'trusted' | 'missing' | 'version' | 'untrusted';
